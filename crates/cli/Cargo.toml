@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-photo-classifier-core = { path = "../core" }
+photo-sorter-core = { path = "../core" }
 clap = { workspace = true }
 anyhow = { workspace = true }

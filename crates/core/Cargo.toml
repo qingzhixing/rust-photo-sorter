@@ -1,5 +1,5 @@
 [package]
-name = "photo-classifier-core"
+name = "photo-sorter-core"
 version = "0.1.0"
 edition = "2024"
 

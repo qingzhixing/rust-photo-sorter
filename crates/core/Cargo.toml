@@ -2,6 +2,10 @@
 name = "photo-sorter-core"
 version = "0.1.0"
 edition = "2024"
+description = "Rust photo sorter core library"
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
 
 [dependencies]
 walkdir = { workspace = true }

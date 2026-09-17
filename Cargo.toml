@@ -1,3 +1,9 @@
+[workspace.package]
+authors = ["qingzhixing <qzsqqmail@qq.com>"]
+description = "Rust photo sorter"
+license = "GPL-3.0"
+homepage = "https://github.com/qingzhixing/rust-photo-sorter"
+
 [workspace]
 members = ["crates/*"]
 resolver = "2"

@@ -3,5 +3,13 @@
 version = 4
 
 [[package]]
-name = "rust-photo-sorter"
+name = "cli"
+version = "0.1.0"
+
+[[package]]
+name = "core"
+version = "0.1.0"
+
+[[package]]
+name = "gui"
 version = "0.1.0"

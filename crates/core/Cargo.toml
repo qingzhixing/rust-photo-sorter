@@ -1,6 +1,10 @@
 [package]
-name = "core"
+name = "photo-classifier-core"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+walkdir = { workspace = true }
+kamadak-exif = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }

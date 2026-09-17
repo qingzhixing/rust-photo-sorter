@@ -1,5 +1,5 @@
 [package]
-name = "photo-sorter-core"
+name = "photo-sorter-cli"
 version = "0.1.0"
 edition = "2024"
 description = "Rust photo sorter CLI"

@@ -845,15 +845,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
-name = "cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "photo-sorter-core",
-]
-
-[[package]]
 name = "clipboard-win"
 version = "5.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1691,16 +1682,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6bf0b36e6f090b7e1d8a4b49c0cb81c1f8376f72198c65dd3ad9ff3556b8b78c"
 dependencies = [
  "bitflags 2.13.2",
-]
-
-[[package]]
-name = "gui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "eframe",
- "photo-sorter-core",
- "rfd",
 ]
 
 [[package]]
@@ -2574,6 +2555,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "photo-sorter-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "photo-sorter-core",
+]
+
+[[package]]
 name = "photo-sorter-core"
 version = "0.1.0"
 dependencies = [
@@ -2581,6 +2571,16 @@ dependencies = [
  "kamadak-exif",
  "thiserror 1.0.69",
  "walkdir",
+]
+
+[[package]]
+name = "photo-sorter-gui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "eframe",
+ "photo-sorter-core",
+ "rfd",
 ]
 
 [[package]]

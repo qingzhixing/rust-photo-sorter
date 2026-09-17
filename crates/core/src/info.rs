@@ -4,7 +4,7 @@ pub const AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
 pub const LICENSE: &str = env!("CARGO_PKG_LICENSE");
 pub const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
 pub const DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
-const ASCII_ART: &str = r#"
+pub const ASCII_ART: &str = r#"
   ____               _     ____   _             _           ____                _              
  |  _ \  _   _  ___ | |_  |  _ \ | |__    ___  | |_  ___   / ___|   ___   _ __ | |_  ___  _ __ 
  | |_) || | | |/ __|| __| | |_) || '_ \  / _ \ | __|/ _ \  \___ \  / _ \ | '__|| __|/ _ \| '__|

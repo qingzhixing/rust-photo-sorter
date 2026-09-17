@@ -1,9 +1,10 @@
-pub const PROJECT_NAME: &str = "rust photo sorter";
+pub const CORE_NAME: &str = env!("CARGO_PKG_NAME");
+pub const PROJECT_NAME: &str = "Rust Photo Sorter";
+pub const DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
 pub const LICENSE: &str = env!("CARGO_PKG_LICENSE");
 pub const HOMEPAGE: &str = env!("CARGO_PKG_HOMEPAGE");
-pub const DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
 pub const ASCII_ART: &str = r#"
   ____               _     ____   _             _           ____                _              
  |  _ \  _   _  ___ | |_  |  _ \ | |__    ___  | |_  ___   / ___|   ___   _ __ | |_  ___  _ __ 
@@ -12,18 +13,15 @@ pub const ASCII_ART: &str = r#"
  |_| \_\ \__,_||___/ \__| |_|    |_| |_| \___/  \__|\___/  |____/  \___/ |_|    \__|\___||_|   
 "#;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub fn print_project_info() {
+    println!("🎀 Project Name: {}", PROJECT_NAME);
+    println!("📖 Description: {}", DESCRIPTION);
+    println!("🥞 Version: {}", VERSION);
+    println!("🐈 Authors: {}", AUTHORS);
+    println!("🎮 License: {}", LICENSE);
+    println!("🔗 Homepage: {}", HOMEPAGE);
+}
 
-    #[test]
-    fn test_print_core_info() {
-        println!("Project Name: {}", PROJECT_NAME);
-        println!("Version: {}", VERSION);
-        println!("Authors: {}", AUTHORS);
-        println!("License: {}", LICENSE);
-        println!("Homepage: {}", HOMEPAGE);
-        println!("Description: {}", DESCRIPTION);
-        println!("{}", ASCII_ART);
-    }
+pub fn print_ascii_art() {
+    println!("{}", ASCII_ART);
 }

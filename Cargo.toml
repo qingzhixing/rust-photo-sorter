@@ -28,7 +28,7 @@ clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 
 # GUI
-eframe = "0.36"
+eframe = { version = "0.36" }
 
 # 文件对话框
 rfd = "0.14"

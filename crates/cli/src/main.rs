@@ -1,8 +1,5 @@
 use clap::Parser;
-use photo_sorter_core::{
-    config::SortConfig,
-    info::{print_ascii_art, print_project_info},
-};
+use photo_sorter_core::{config::SortConfig, info::print_project_info};
 
 mod cli_args;
 
@@ -11,7 +8,7 @@ fn main() {
 
     // 处理 version 选项
     if args.version {
-        print_ascii_art();
+        // print_ascii_art();
         print_project_info();
         return;
     }

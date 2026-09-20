@@ -1,6 +1,6 @@
 use clap::Parser;
 use photo_sorter_core::{
-    config::{self, SortConfig},
+    config::SortConfig,
     info::{print_ascii_art, print_project_info},
 };
 

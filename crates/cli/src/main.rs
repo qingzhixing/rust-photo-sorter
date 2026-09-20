@@ -1,4 +1,9 @@
+use clap::Parser;
+use photo_sorter_core::config::SortConfig;
+
+mod cli_args;
+
 fn main() {
-    photo_sorter_core::info::print_project_info();
-    photo_sorter_core::info::print_ascii_art();
+    let config: SortConfig = cli_args::CliArgs::parse().into();
+    println!("{:?}", config);
 }

@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum NoDateSortType {
     // 按修改日期分类
@@ -11,6 +13,17 @@ pub enum NoDateSortType {
 impl Default for NoDateSortType {
     fn default() -> Self {
         Self::BySingleFolder
+    }
+}
+
+impl fmt::Display for NoDateSortType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match self {
+            NoDateSortType::ByModificationDate => "按修改日期分类",
+            NoDateSortType::BySingleFolder => "放入单独文件夹",
+            NoDateSortType::DoNotMove => "不移动",
+        };
+        f.write_str(text)
     }
 }
 
@@ -28,7 +41,17 @@ impl Default for WorkMode {
     }
 }
 
-#[derive(Default, Debug)]
+impl fmt::Display for WorkMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let text = match self {
+            WorkMode::Extract => "提取",
+            WorkMode::Sort => "分类",
+        };
+        f.write_str(text)
+    }
+}
+
+#[derive(Default, Debug, Clone)]
 pub struct SortConfig {
     pub work_mode: WorkMode,
     // 没有拍摄日期的照片分类标准

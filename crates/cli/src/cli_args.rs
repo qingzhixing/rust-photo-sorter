@@ -1,5 +1,5 @@
 use clap::Parser;
-use photo_sorter_core::config::{NoDateSortType, SortConfig};
+use photo_sorter_core::config::{NoDateSortType, SortConfig, WorkMode};
 use photo_sorter_core::info::{
     AUTHORS, DESCRIPTION, PROJECT_NAME, VERSION
 };
@@ -28,9 +28,13 @@ pub(crate) struct CliArgs {
     #[arg(short = 'V', long = "version")]
     pub version: bool,
 
-    /// 没有拍摄日期的照片分类标准
+    /// 有此标记时,提取目标目录及其子目录所有照片并删除空目录
+    #[arg(long = "extract")]
+    pub extract_mode: bool,
+
+    /// 没有拍摄日期的照片 分类标准
     #[arg(
-        long,
+        long = "sort-type",
         default_value = "by-single-folder",
         value_parser = parse_no_date_sort_type,
     )]
@@ -51,12 +55,19 @@ pub(crate) struct CliArgs {
 
 impl From<CliArgs> for SortConfig {
     fn from(cli_args: CliArgs) -> Self {
+        let input_dir = cli_args.input_dir.unwrap();
+        let work_mode = if cli_args.extract_mode {
+            WorkMode::Extract
+        } else {
+            WorkMode::Sort
+        };
         let output_dir = cli_args
             .output_dir
-            .unwrap_or_else(|| cli_args.input_dir.clone().unwrap());
+            .unwrap_or_else(|| input_dir.clone());
         SortConfig {
+            work_mode,
             no_date_sort_type: cli_args.no_date_sort_type,
-            input_dir: cli_args.input_dir.unwrap(),
+            input_dir,
             output_dir,
             photo_count_threshold: cli_args.photo_count_threshold,
         }

@@ -14,8 +14,23 @@ impl Default for NoDateSortType {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum WorkMode {
+    // 将目标目录及其子目录所有照片提取出来并删除空目录
+    Extract,
+    // 对照片进行分类
+    Sort,
+}
+
+impl Default for WorkMode {
+    fn default() -> Self {
+        Self::Sort
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct SortConfig {
+    pub work_mode: WorkMode,
     // 没有拍摄日期的照片分类标准
     pub no_date_sort_type: NoDateSortType,
     pub input_dir: String,

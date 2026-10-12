@@ -11,3 +11,5 @@ homepage.workspace = true
 photo-sorter-core = { path = "../core" }
 clap = { workspace = true }
 anyhow = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }

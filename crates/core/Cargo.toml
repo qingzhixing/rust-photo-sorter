@@ -12,3 +12,4 @@ walkdir = { workspace = true }
 kamadak-exif = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
+log = { workspace = true }

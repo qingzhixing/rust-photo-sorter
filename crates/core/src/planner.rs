@@ -152,7 +152,10 @@ pub fn plan(config: &SortConfig, photos: &[Photo], fs: &dyn TargetFs) -> Plan {
             let Pending::Skip(reason) = item else {
                 unreachable!("只有 Skip 才会没有目标目录")
             };
-            plan.skipped.push(Skipped { source: photo.path.clone(), reason: *reason });
+            plan.skipped.push(Skipped {
+                source: photo.path.clone(),
+                reason: *reason,
+            });
             continue;
         };
 
@@ -205,15 +208,28 @@ enum Pending {
 }
 
 /// 决定一张照片的去向（还没定文件名）。
+///
+/// 拍摄日期按「EXIF → 文件名（开关打开时）→ 无拍摄日期策略」的顺序确定。
+/// 文件名之所以排在 EXIF 之后：EXIF 是相机自己写的，比文件名里的数字更权威。
 fn classify(config: &SortConfig, photo: &Photo) -> Pending {
     let root = PathBuf::from(&config.output_dir);
 
     if config.work_mode == WorkMode::Extract {
         // 提取模式不分类，全部平铺到输出目录根
-        return Pending::Fixed { dir: root, folder: FolderKind::ExtractRoot };
+        return Pending::Fixed {
+            dir: root,
+            folder: FolderKind::ExtractRoot,
+        };
     }
 
     if let Some(datetime) = photo.exif_datetime {
+        return Pending::Dated(datetime.date());
+    }
+
+    // 截图类工具不写 EXIF，但常把时间戳放进文件名
+    if config.parse_date_from_filename
+        && let Some(datetime) = photo::datetime_from_file_name(&photo.path)
+    {
         return Pending::Dated(datetime.date());
     }
 
@@ -222,15 +238,14 @@ fn classify(config: &SortConfig, photo: &Photo) -> Pending {
         NoDateSortType::ByModificationDate => match photo.modified {
             Some(datetime) => Pending::Dated(datetime.date()),
             // 连修改时间都读不到，只能塞进无日期目录，总不能把文件丢了
-            None => Pending::Fixed { dir: root.join(NO_DATE_DIR), folder: FolderKind::NoDate },
+            None => Pending::Fixed {
+                dir: root.join(NO_DATE_DIR),
+                folder: FolderKind::NoDate,
+            },
         },
-        NoDateSortType::BySingleFolder => {
-            Pending::Fixed { dir: root.join(NO_DATE_DIR), folder: FolderKind::NoDate }
-        }
-        // 截图类工具不写 EXIF，但常把时间戳放进文件名
-        NoDateSortType::FromFileName => match photo::datetime_from_file_name(&photo.path) {
-            Some(datetime) => Pending::Dated(datetime.date()),
-            None => Pending::Fixed { dir: root.join(NO_DATE_DIR), folder: FolderKind::NoDate },
+        NoDateSortType::BySingleFolder => Pending::Fixed {
+            dir: root.join(NO_DATE_DIR),
+            folder: FolderKind::NoDate,
         },
         NoDateSortType::DoNotMove => Pending::Skip(SkipReason::Configured),
     }
@@ -289,7 +304,11 @@ impl TakenNames {
     /// 占用一个不冲突的名字：`IMG_1234.jpg` → `IMG_1234 (1).jpg` → `IMG_1234 (2).jpg`…
     fn claim(&mut self, stem: &str, ext: Option<&str>) -> String {
         let compose = |n: u32| -> String {
-            let base = if n == 0 { stem.to_owned() } else { format!("{stem} ({n})") };
+            let base = if n == 0 {
+                stem.to_owned()
+            } else {
+                format!("{stem} ({n})")
+            };
             match ext {
                 Some(ext) => format!("{base}.{ext}"),
                 None => base,
@@ -322,7 +341,10 @@ mod tests {
 
     impl FakeFs {
         fn with(mut self, dir: &str, names: &[&str]) -> Self {
-            self.0.insert(PathBuf::from(dir), names.iter().map(|n| (*n).to_owned()).collect());
+            self.0.insert(
+                PathBuf::from(dir),
+                names.iter().map(|n| (*n).to_owned()).collect(),
+            );
             self
         }
     }
@@ -337,6 +359,8 @@ mod tests {
         SortConfig {
             work_mode: WorkMode::Sort,
             no_date_sort_type: NoDateSortType::BySingleFolder,
+            // 和默认配置一致：截图类照片靠文件名里的时间戳入档
+            parse_date_from_filename: true,
             input_dir: "C:\\in".to_owned(),
             output_dir: "C:\\out".to_owned(),
             photo_count_threshold: 20,
@@ -346,7 +370,8 @@ mod tests {
     fn photo(path: &str, taken: Option<&str>) -> Photo {
         Photo {
             path: PathBuf::from(path),
-            exif_datetime: taken.map(|t| NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S").unwrap()),
+            exif_datetime: taken
+                .map(|t| NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S").unwrap()),
             modified: None,
         }
     }
@@ -414,7 +439,10 @@ mod tests {
         assert_eq!(plan.entries.len(), 3);
         for entry in &plan.entries {
             assert_eq!(entry.folder, FolderKind::Day);
-            assert_eq!(entry.target.parent().unwrap(), Path::new("C:\\out\\2026.07.30"));
+            assert_eq!(
+                entry.target.parent().unwrap(),
+                Path::new("C:\\out\\2026.07.30")
+            );
         }
     }
 
@@ -436,7 +464,10 @@ mod tests {
         // 同一个 ISO 周里的两天，只有 7-30 超阈值
         let mut photos = Vec::new();
         for i in 0..3 {
-            photos.push(photo(&format!("C:\\in\\busy{i}.jpg"), Some("2026-07-30 10:00:00")));
+            photos.push(photo(
+                &format!("C:\\in\\busy{i}.jpg"),
+                Some("2026-07-30 10:00:00"),
+            ));
         }
         photos.push(photo("C:\\in\\quiet.jpg", Some("2026-07-28 10:00:00")));
 
@@ -444,10 +475,18 @@ mod tests {
         cfg.photo_count_threshold = 2;
         let plan = plan(&cfg, &photos, &no_fs());
 
-        let quiet = plan.entries.iter().find(|e| e.source.ends_with("quiet.jpg")).unwrap();
+        let quiet = plan
+            .entries
+            .iter()
+            .find(|e| e.source.ends_with("quiet.jpg"))
+            .unwrap();
         assert_eq!(quiet.folder, FolderKind::Week);
 
-        let busy = plan.entries.iter().find(|e| e.source.ends_with("busy0.jpg")).unwrap();
+        let busy = plan
+            .entries
+            .iter()
+            .find(|e| e.source.ends_with("busy0.jpg"))
+            .unwrap();
         assert_eq!(busy.folder, FolderKind::Day);
     }
 
@@ -459,7 +498,10 @@ mod tests {
         cfg.no_date_sort_type = NoDateSortType::BySingleFolder;
         let placed = plan(&cfg, &photos, &no_fs());
         assert_eq!(placed.entries[0].folder, FolderKind::NoDate);
-        assert_eq!(placed.entries[0].target, PathBuf::from("C:\\out\\无拍摄日期\\a.jpg"));
+        assert_eq!(
+            placed.entries[0].target,
+            PathBuf::from("C:\\out\\无拍摄日期\\a.jpg")
+        );
 
         cfg.no_date_sort_type = NoDateSortType::DoNotMove;
         let left_alone = plan(&cfg, &photos, &no_fs());
@@ -468,13 +510,11 @@ mod tests {
     }
 
     #[test]
-    fn filename_timestamp_is_used_in_from_filename_mode() {
+    fn filename_timestamp_is_used_by_default() {
         // 真实的 Steam 截图命名：前面是应用 ID，后面才是时间戳
         let photos = vec![photo("C:\\in\\1629520_20260911110905_1.png", None)];
-        let mut cfg = config();
-        cfg.no_date_sort_type = NoDateSortType::FromFileName;
 
-        let plan = plan(&cfg, &photos, &no_fs());
+        let plan = plan(&config(), &photos, &no_fs());
 
         assert_eq!(plan.entries.len(), 1);
         assert_eq!(plan.entries[0].folder, FolderKind::Week);
@@ -486,12 +526,60 @@ mod tests {
     }
 
     #[test]
-    fn from_filename_falls_back_to_the_no_date_folder() {
-        let photos = vec![photo("C:\\in\\steam_screenshot.png", None)];
+    fn filename_date_can_be_turned_off() {
+        let photos = vec![photo("C:\\in\\1629520_20260911110905_1.png", None)];
         let mut cfg = config();
-        cfg.no_date_sort_type = NoDateSortType::FromFileName;
+        cfg.parse_date_from_filename = false;
 
         let plan = plan(&cfg, &photos, &no_fs());
+
+        // 关掉之后文件名不再被解读，回到「无拍摄日期」策略
+        assert_eq!(plan.entries[0].folder, FolderKind::NoDate);
+        assert_eq!(
+            plan.entries[0].target,
+            PathBuf::from("C:\\out\\无拍摄日期\\1629520_20260911110905_1.png")
+        );
+    }
+
+    #[test]
+    fn exif_wins_over_the_filename_timestamp() {
+        // EXIF 说 7-28，文件名说 9-11：相机写的更权威
+        let photos = vec![photo(
+            "C:\\in\\1629520_20260911110905_1.png",
+            Some("2026-07-28 10:00:00"),
+        )];
+
+        let plan = plan(&config(), &photos, &no_fs());
+
+        assert_eq!(
+            plan.entries[0].target,
+            PathBuf::from("C:\\out\\2026.07.27 至 08.02 第31周\\1629520_20260911110905_1.png")
+        );
+    }
+
+    #[test]
+    fn filename_date_wins_over_the_modification_time_policy() {
+        let mut shot = photo("C:\\in\\1629520_20260911110905_1.png", None);
+        // 文件是后来拷来拷去才变成这个修改时间的，不该盖过文件名里的拍摄时间
+        shot.modified = Some(
+            NaiveDateTime::parse_from_str("2026-07-30 12:00:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+        );
+
+        let mut cfg = config();
+        cfg.no_date_sort_type = NoDateSortType::ByModificationDate;
+        let plan = plan(&cfg, &[shot], &no_fs());
+
+        assert_eq!(
+            plan.entries[0].target,
+            PathBuf::from("C:\\out\\2026.09.07 至 09.13 第37周\\1629520_20260911110905_1.png")
+        );
+    }
+
+    #[test]
+    fn unreadable_filename_falls_back_to_the_no_date_folder() {
+        let photos = vec![photo("C:\\in\\steam_screenshot.png", None)];
+
+        let plan = plan(&config(), &photos, &no_fs());
 
         // 文件名里没有可用日期 → 仍然进无日期目录，不能把文件弄丢
         assert_eq!(plan.entries[0].folder, FolderKind::NoDate);
@@ -543,10 +631,7 @@ mod tests {
             photo("C:\\in\\other\\IMG_1234.jpg", Some("2026-07-30 11:00:00")),
         ];
         // 目标周目录里已经有一张同名照片
-        let fs = FakeFs::default().with(
-            "C:\\out\\2026.07.27 至 08.02 第31周",
-            &["IMG_1234.jpg"],
-        );
+        let fs = FakeFs::default().with("C:\\out\\2026.07.27 至 08.02 第31周", &["IMG_1234.jpg"]);
 
         let plan = plan(&config(), &photos, &fs);
 
@@ -560,15 +645,19 @@ mod tests {
 
     #[test]
     fn conflict_detection_ignores_case() {
-        let photos = vec![photo("C:\\in\\trip\\img_1234.jpg", Some("2026-07-30 10:00:00"))];
-        let fs = FakeFs::default().with(
-            "C:\\out\\2026.07.27 至 08.02 第31周",
-            &["IMG_1234.JPG"],
-        );
+        let photos = vec![photo(
+            "C:\\in\\trip\\img_1234.jpg",
+            Some("2026-07-30 10:00:00"),
+        )];
+        let fs = FakeFs::default().with("C:\\out\\2026.07.27 至 08.02 第31周", &["IMG_1234.JPG"]);
 
         let plan = plan(&config(), &photos, &fs);
         assert_eq!(
-            plan.entries[0].target.file_name().unwrap().to_string_lossy(),
+            plan.entries[0]
+                .target
+                .file_name()
+                .unwrap()
+                .to_string_lossy(),
             "img_1234 (1).jpg"
         );
     }
@@ -580,10 +669,7 @@ mod tests {
             "C:\\out\\2026.07.27 至 08.02 第31周\\a.jpg",
             Some("2026-07-30 10:00:00"),
         )];
-        let fs = FakeFs::default().with(
-            "C:\\out\\2026.07.27 至 08.02 第31周",
-            &["a.jpg"],
-        );
+        let fs = FakeFs::default().with("C:\\out\\2026.07.27 至 08.02 第31周", &["a.jpg"]);
 
         let plan = plan(&config(), &photos, &fs);
 

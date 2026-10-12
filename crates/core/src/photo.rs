@@ -50,7 +50,19 @@ pub fn is_photo(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;
     };
-    PHOTO_EXTENSIONS.iter().any(|known| ext.eq_ignore_ascii_case(known))
+    PHOTO_EXTENSIONS
+        .iter()
+        .any(|known| ext.eq_ignore_ascii_case(known))
+}
+
+/// 路径的最后一段，供界面和时间轴之类的窄地方展示。
+///
+/// 找不到文件名（例如以 `..` 结尾）时退回整条路径：
+/// 展示层宁可显示得啰嗦，也不该显示空白让人以为哪都去不了。
+pub fn file_label(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 /// 递归扫描 `input_dir` 下的所有照片。
@@ -332,13 +344,13 @@ mod tests {
     #[test]
     fn rejects_names_without_a_usable_date() {
         for name in [
-            "IMG_1234.jpg",          // 数字段太短
-            "99999999999999.jpg",    // 14 位但不是合法日期
-            "20261345.jpg",          // 13 月
-            "20260230.jpg",          // 2 月 30 日
-            "screenshot.png",        // 没有数字
-            "1234_5678.png",         // 有 8 位数字但不是日期
-            "a-1-2-3-4-5-6.jpg",     // 分段长度不对
+            "IMG_1234.jpg",       // 数字段太短
+            "99999999999999.jpg", // 14 位但不是合法日期
+            "20261345.jpg",       // 13 月
+            "20260230.jpg",       // 2 月 30 日
+            "screenshot.png",     // 没有数字
+            "1234_5678.png",      // 有 8 位数字但不是日期
+            "a-1-2-3-4-5-6.jpg",  // 分段长度不对
         ] {
             assert_eq!(
                 datetime_from_file_name(Path::new(name)),

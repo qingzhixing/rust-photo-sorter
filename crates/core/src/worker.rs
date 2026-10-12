@@ -22,7 +22,7 @@ use walkdir::WalkDir;
 use crate::config::{SortConfig, WorkMode};
 use crate::error::SortError;
 use crate::photo;
-use crate::planner::{self, FolderKind, Plan, PlanEntry, SkipReason, TargetFs};
+use crate::planner::{self, FolderKind, Plan, PlanEntry, SkipReason, Skipped, TargetFs};
 
 /// 跨盘（跨卷）移动时 `fs::rename` 会失败，错误码各平台不同。
 #[cfg(windows)]
@@ -140,17 +140,29 @@ impl PhotoOutcome {
 /// 整理过程的旁听者。
 ///
 /// Core 只管搬运，不假设调用方怎么展示进度：CLI 可以什么都不传，
-/// GUI 则把这两次通知转成转发给界面的进度消息。
+/// GUI 则把这几类通知转成给界面的消息。
 ///
 /// 回调在**执行整理的那个线程**上被调用；借用形式传入，且 [`run`] 返回前
 /// 一定会把借用还回去，所以实现里用 `&self` + 内部可变性（如 `Cell`、通道）
 /// 就够了，不需要一个可变的观察者。
 pub trait Observer {
-    /// 扫描与规划结束，开始落地前的通知；试运行不会触发。
+    /// 扫描与规划结束，开始落地前的通知。
     ///
-    /// 参数依次为扫描到的照片数、计划搬运数、明确跳过的数量。
-    fn on_started(&self, scanned: usize, planned: usize, skipped: usize) {
+    /// 这是「本次要处理多少」的总量通知，试运行也会发；参数依次为
+    /// 扫描到的照片数、计划搬运数、跳过的明细（按原因的计数，
+    /// 例如「已在目标位置 74 张」）。
+    ///
+    /// 想知道「什么时候开始真的动文件了」，别用这个回调——试运行同样会触发它。
+    fn on_started(&self, scanned: usize, planned: usize, skipped: &[(SkipReason, usize)]) {
         let _ = (scanned, planned, skipped);
+    }
+
+    /// 一张照片被明确跳过（[`SkipReason`]）时的通知。
+    ///
+    /// 和 [`Observer::on_photo`] 一样逐张发出：调用方想列出
+    /// 「哪些没动、为什么」时不必自己再扫一遍计划。
+    fn on_skipped(&self, skipped: &Skipped) {
+        let _ = skipped;
     }
 
     /// 一张照片处理完（成功或失败）之后的通知。
@@ -205,9 +217,7 @@ impl Report {
 /// `mode` 决定是「只看不动」「移动」还是「复制」。
 ///
 /// `observer` 是可选的旁听者：传 [`None`] 就是「闷头干完再返回报告」，
-/// 传 [`Some`] 则每张照片处理完都会收到通知（见 [`Observer`]）。
-/// 试运行不落地任何文件，也就没有「进度」可言，因此**不会**发出开始通知，
-/// 逐张的通知照发（试运行也要能逐张列出「打算怎么搬」）。
+/// 传 [`Some`] 则「跳过一张」「处理完一张」都会收到通知（见 [`Observer`]）。
 pub fn run(
     config: &SortConfig,
     mode: ExecuteMode,
@@ -242,8 +252,12 @@ pub fn run(
     report.planned = plan.entries.len();
     report.skipped = plan.skipped.len();
 
+    let skipped_breakdown = skip_breakdown(&plan);
     for item in &plan.skipped {
         debug!("跳过 {}：{}", item.source.display(), item.reason);
+        if let Some(observer) = observer {
+            observer.on_skipped(item);
+        }
     }
     info!(
         "{}模式：待处理 {} 张，跳过 {} 张",
@@ -251,14 +265,13 @@ pub fn run(
     );
     // 「跳过了 74 张」不写清楚原因，用户根本没法判断这是不是自己想要的
     if report.skipped > 0 {
-        info!("跳过明细：{}", skip_breakdown(&plan));
+        info!("跳过明细：{}", describe_skips(&skipped_breakdown));
     }
 
-    // 试运行没有进度可言：这里一张文件都不落地
-    if !mode.is_dry_run()
-        && let Some(observer) = observer
-    {
-        observer.on_started(report.scanned, report.planned, report.skipped);
+    // 统计一律报出去：调用方要靠它显示「扫描/跳过/待处理」，
+    // 试运行同样需要这些数字（它没有的是「进度」，不是「总量」）
+    if let Some(observer) = observer {
+        observer.on_started(report.scanned, report.planned, &skipped_breakdown);
     }
 
     for entry in &plan.entries {
@@ -427,15 +440,22 @@ fn describe(err: &io::Error) -> String {
     }
 }
 
-/// 把跳过原因汇总成一行，例如「已在目标位置 74 张，配置为不移动 3 张」。
-fn skip_breakdown(plan: &Plan) -> String {
+/// 按原因统计跳过的照片，例如 `[(已在目标位置, 74), (配置为不移动, 3)]`。
+///
+/// 按 [`SkipReason`] 的声明顺序排列：同一份计划每次统计出来的次序都一样，
+/// 日志和界面才不会忽前忽后。
+fn skip_breakdown(plan: &Plan) -> Vec<(SkipReason, usize)> {
     let mut counts: BTreeMap<SkipReason, usize> = BTreeMap::new();
     for item in &plan.skipped {
         *counts.entry(item.reason).or_default() += 1;
     }
+    counts.into_iter().collect()
+}
 
-    counts
-        .into_iter()
+/// 把跳过统计拼成一行，例如「已在目标位置 74 张，配置为不移动 3 张」。
+fn describe_skips(breakdown: &[(SkipReason, usize)]) -> String {
+    breakdown
+        .iter()
         .map(|(reason, count)| format!("{reason} {count} 张"))
         .collect::<Vec<_>>()
         .join("，")
@@ -529,6 +549,7 @@ mod tests {
         SortConfig {
             work_mode: WorkMode::Sort,
             no_date_sort_type: NoDateSortType::BySingleFolder,
+            parse_date_from_filename: true,
             input_dir: input.to_string_lossy().into_owned(),
             output_dir: output.to_string_lossy().into_owned(),
             photo_count_threshold: 20,
@@ -644,6 +665,8 @@ mod tests {
         // 只该看到 in/a.jpg，输出目录里的照片不参与扫描
         assert_eq!(report.scanned, 1);
         assert!(output.join("已归档.jpg").exists(), "已归档的照片不该被搬走");
+        // 不在输入树里也就谈不上「跳过」：跳过统计只算扫到过的照片
+        assert_eq!(report.skipped, 0);
     }
 
     #[test]
@@ -774,21 +797,36 @@ mod tests {
             ],
         };
 
-        let text = skip_breakdown(&plan);
+        let breakdown = skip_breakdown(&plan);
+        assert_eq!(
+            breakdown,
+            vec![(SkipReason::Configured, 1), (SkipReason::AlreadyInPlace, 2)],
+            "按固定顺序统计，日志和界面才不会忽前忽后"
+        );
+
+        let text = describe_skips(&breakdown);
         assert!(text.contains("已在目标位置 2 张"), "{text}");
         assert!(text.contains("配置为不移动 1 张"), "{text}");
     }
 
+    /// [`Observer::on_started`] 的三个参数。
+    type Started = (usize, usize, Vec<(SkipReason, usize)>);
+
     /// 把观察者收到的通知原样记下来，供测试断言。
     #[derive(Default)]
     struct RecordingObserver {
-        started: RefCell<Option<(usize, usize, usize)>>,
+        started: RefCell<Option<Started>>,
+        skipped: RefCell<Vec<Skipped>>,
         outcomes: RefCell<Vec<PhotoOutcome>>,
     }
 
     impl Observer for RecordingObserver {
-        fn on_started(&self, scanned: usize, planned: usize, skipped: usize) {
-            *self.started.borrow_mut() = Some((scanned, planned, skipped));
+        fn on_started(&self, scanned: usize, planned: usize, skipped: &[(SkipReason, usize)]) {
+            *self.started.borrow_mut() = Some((scanned, planned, skipped.to_vec()));
+        }
+
+        fn on_skipped(&self, skipped: &Skipped) {
+            self.skipped.borrow_mut().push(skipped.clone());
         }
 
         fn on_photo(&self, outcome: &PhotoOutcome) {
@@ -809,7 +847,7 @@ mod tests {
 
         assert_eq!(
             *observer.started.borrow(),
-            Some((2, 2, 0)),
+            Some((2, 2, Vec::new())),
             "开始时应当报出扫描/计划/跳过的数量"
         );
 
@@ -819,6 +857,37 @@ mod tests {
         // 通知里带上真实路径，界面才能显示「正在处理哪一个」
         assert!(outcomes.iter().any(|o| o.source().ends_with("a.jpg")));
         assert!(outcomes.iter().all(|o| o.problem().is_none()));
+    }
+
+    #[test]
+    fn observer_is_told_what_was_skipped() {
+        let tmp = TempDir::new("observer-skip");
+        let input = tmp.path().join("in");
+        let output = tmp.path().join("out");
+        test_support::write(&input.join("a.jpg"), "x");
+
+        // 第一遍把它搬进「无拍摄日期」
+        run(&config(&input, &output), ExecuteMode::Move, None).unwrap();
+
+        // 第二遍直接把已经归档的目录当输入：照片已经在对的位置，
+        // 该被跳过，而「跳过」这件事也要通知出去
+        let observer = RecordingObserver::default();
+        let report = run(
+            &config(&output, &output),
+            ExecuteMode::Move,
+            Some(&observer),
+        )
+        .unwrap();
+
+        assert_eq!(report.skipped, 1);
+        let skipped = observer.skipped.borrow();
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].reason, SkipReason::AlreadyInPlace);
+        assert!(skipped[0].source.ends_with("a.jpg"));
+        // 汇总里的计数要和逐条通知对得上，界面上的两处数字才不会打架
+        let started = observer.started.borrow();
+        let (_, _, breakdown) = started.as_ref().expect("开始时应当有通知");
+        assert_eq!(breakdown, &[(SkipReason::AlreadyInPlace, 1)]);
     }
 
     #[test]
@@ -842,24 +911,29 @@ mod tests {
     }
 
     #[test]
-    fn dry_run_announces_no_start_because_nothing_is_landed() {
+    fn dry_run_still_reports_the_totals() {
         let tmp = TempDir::new("observer-dry-run");
         let input = tmp.path().join("in");
-        let output = tmp.path().join("out");
+        // 一张待搬、一张已经就位：跳过统计同样要在试运行里报出来
         test_support::write(&input.join("a.jpg"), "x");
+        test_support::write(&input.join(planner::NO_DATE_DIR).join("done.jpg"), "y");
 
         let observer = RecordingObserver::default();
         run(
-            &config(&input, &output),
+            &config(&input, &input),
             ExecuteMode::DryRun,
             Some(&observer),
         )
         .unwrap();
 
-        // 试运行不落地任何文件，没有「进度」可言，开始时的那次通知要省掉，
-        // 否则界面会画出一个永远停在 0% 的进度条
-        assert!(observer.started.borrow().is_none());
-        // 逐张的通知仍然照发：界面上「试运行会怎么搬」的清单就是靠它拼的
+        // 试运行没有「进度」，但「总量」是有的：调用方要靠它显示扫描/跳过/待处理
+        let started = observer.started.borrow();
+        let (scanned, planned, breakdown) = started.as_ref().expect("试运行也要报总量");
+        assert_eq!((*scanned, *planned), (2, 1));
+        assert_eq!(breakdown, &[(SkipReason::AlreadyInPlace, 1)]);
+
+        // 逐张的通知照发：界面上「试运行会怎么搬」的清单就是靠它拼的
+        assert_eq!(observer.skipped.borrow().len(), 1);
         assert_eq!(observer.outcomes.borrow().len(), 1);
         assert!(observer.outcomes.borrow()[0].is_done());
     }

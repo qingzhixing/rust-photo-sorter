@@ -15,6 +15,8 @@ pub struct ConfigForm {
     pub work_mode: WorkMode,
     /// 没有拍摄日期的照片分类标准
     pub no_date_sort_type: NoDateSortType,
+    /// 读不到拍摄日期时，是否再从文件名里的时间戳推断（默认开启）
+    pub parse_date_from_filename: bool,
     pub input_dir: String,
     pub output_dir: String,
     /// 照片数量阈值：某一天的照片数量超过阈值时，单独放入一个文件夹
@@ -26,6 +28,8 @@ impl Default for ConfigForm {
         Self {
             work_mode: WorkMode::default(),
             no_date_sort_type: NoDateSortType::default(),
+            // 与 core 的默认值一致：截图类照片靠文件名里的时间戳入档
+            parse_date_from_filename: true,
             input_dir: String::new(),
             output_dir: String::new(),
             photo_count_threshold: 20,
@@ -52,6 +56,7 @@ impl ConfigForm {
         Ok(SortConfig {
             work_mode: self.work_mode.clone(),
             no_date_sort_type: self.no_date_sort_type.clone(),
+            parse_date_from_filename: self.parse_date_from_filename,
             input_dir: input_dir.to_owned(),
             output_dir: output_dir.to_owned(),
             photo_count_threshold: self.photo_count_threshold,
@@ -63,9 +68,14 @@ impl ConfigForm {
     /// 打印的是校验、补全之后的最终配置，而不是表单里的原始输入。
     pub fn summarize(config: &SortConfig) -> String {
         format!(
-            "工作模式: {}\n无拍摄日期照片: {}\n输入目录: {}\n输出目录: {}\n照片数量阈值: {}",
+            "工作模式: {}\n无拍摄日期照片: {}\n从文件名读日期: {}\n输入目录: {}\n输出目录: {}\n照片数量阈值: {}",
             config.work_mode,
             config.no_date_sort_type,
+            if config.parse_date_from_filename {
+                "开"
+            } else {
+                "关"
+            },
             config.input_dir,
             config.output_dir,
             config.photo_count_threshold,
@@ -88,6 +98,19 @@ mod tests {
     #[test]
     fn default_threshold_is_20() {
         assert_eq!(ConfigForm::default().photo_count_threshold, 20);
+    }
+
+    #[test]
+    fn filename_date_is_checked_by_default() {
+        // 界面上的初始勾选状态要和 core 的默认值一致，
+        // 否则「读到的配置」和用户以为的默认行为会对不上
+        assert!(ConfigForm::default().parse_date_from_filename);
+        assert!(
+            form("D:\\in", "")
+                .read_config()
+                .unwrap()
+                .parse_date_from_filename
+        );
     }
 
     #[test]
@@ -115,11 +138,13 @@ mod tests {
         let mut form = form("D:\\in", "");
         form.work_mode = WorkMode::Extract;
         form.no_date_sort_type = NoDateSortType::DoNotMove;
+        form.parse_date_from_filename = false;
         form.photo_count_threshold = 7;
 
         let config = form.read_config().unwrap();
         assert_eq!(config.work_mode, WorkMode::Extract);
         assert_eq!(config.no_date_sort_type, NoDateSortType::DoNotMove);
+        assert!(!config.parse_date_from_filename, "取消勾选要真的传下去");
         assert_eq!(config.photo_count_threshold, 7);
     }
 
@@ -129,6 +154,7 @@ mod tests {
         let summary = ConfigForm::summarize(&form("D:\\in", "").read_config().unwrap());
         assert!(summary.contains("输入目录: D:\\in"), "{summary}");
         assert!(summary.contains("输出目录: D:\\in"), "{summary}");
+        assert!(summary.contains("从文件名读日期: 开"), "{summary}");
         assert!(summary.contains("照片数量阈值: 20"), "{summary}");
     }
 }

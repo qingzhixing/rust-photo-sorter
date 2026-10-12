@@ -17,7 +17,25 @@ use std::time::Instant;
 
 use eframe::egui;
 use photo_sorter_core::config::SortConfig;
+use photo_sorter_core::planner::{FolderKind, SkipReason, Skipped};
 use photo_sorter_core::worker::{self, ExecuteMode, Observer, PhotoOutcome, Report};
+
+/// 界面上最多保留多少条计划明细。
+///
+/// 一次整理可能几万张，全留着白占内存、画出来也没人看得完；
+/// 超出部分只留计数，用户仍然知道「清单不全」。
+const MAX_DETAIL_ROWS: usize = 500;
+
+/// 一条「谁搬到哪」的计划明细。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedMove {
+    /// 源文件
+    pub source: PathBuf,
+    /// 目标路径（含最终文件名）
+    pub target: PathBuf,
+    /// 目标目录属于哪一类
+    pub folder: FolderKind,
+}
 
 /// 整理过程中的进度快照。
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -34,6 +52,14 @@ pub struct JobProgress {
     pub failed: usize,
     /// 最近一张处理过的照片（试运行时是「打算搬运」的那张）
     pub current: Option<PathBuf>,
+    /// 逐条的搬运计划，供结果面板列出「哪张 → 哪张」
+    pub moves: Vec<PlannedMove>,
+    /// 因为超过 [`MAX_DETAIL_ROWS`] 而没有记下的条数
+    pub omitted_moves: usize,
+    /// 跳过的照片：不落地也要说清为什么没动
+    pub skipped_photos: Vec<Skipped>,
+    /// 按原因统计的跳过数量，例如「已在目标位置 74 张」
+    pub skipped_reasons: Vec<(SkipReason, usize)>,
 }
 
 impl JobProgress {
@@ -56,6 +82,42 @@ impl JobProgress {
             self.done() as f32 / total as f32
         }
     }
+
+    /// 「已在目标位置 74 张，配置为不移动 3 张」这样的一行。
+    pub fn skipped_summary(&self) -> String {
+        self.skipped_reasons
+            .iter()
+            .map(|(reason, count)| format!("{reason} {count} 张"))
+            .collect::<Vec<_>>()
+            .join("，")
+    }
+
+    /// 记下一条搬运明细（成功与失败都记：失败的那张也得让人看见本来要去哪）。
+    fn record_move(&mut self, outcome: &PhotoOutcome) {
+        if self.moves.len() >= MAX_DETAIL_ROWS {
+            self.omitted_moves += 1;
+            return;
+        }
+
+        let (source, target, folder) = match outcome {
+            PhotoOutcome::Done {
+                source,
+                target,
+                folder,
+            }
+            | PhotoOutcome::Failed {
+                source,
+                target,
+                folder,
+                ..
+            } => (source, target, *folder),
+        };
+        self.moves.push(PlannedMove {
+            source: source.clone(),
+            target: target.clone(),
+            folder,
+        });
+    }
 }
 
 /// 界面当前该展示的执行状态。
@@ -71,8 +133,13 @@ pub enum JobState {
         /// 本次执行的开始时刻，用来显示已耗时
         started_at: Instant,
     },
-    /// 跑完了（[`ResultMessage::Error`] 只代表「没能跑起来」）
-    Finished(ResultMessage),
+    /// 跑完了
+    Finished {
+        /// 本次执行的最终进度：结果面板除了统计，还要列出「哪张 → 哪张」
+        progress: JobProgress,
+        /// [`ResultMessage::Error`] 只代表「没能跑起来」
+        result: ResultMessage,
+    },
 }
 
 impl JobState {
@@ -94,12 +161,14 @@ pub enum ResultMessage {
 /// 工作线程发给界面线程的消息。
 #[derive(Debug)]
 enum Message {
-    /// 开始落地，附上扫描/计划/跳过的数量
+    /// 开始落地，附上扫描/计划的数量与跳过统计
     Started {
         scanned: usize,
         planned: usize,
-        skipped: usize,
+        skipped: Vec<(SkipReason, usize)>,
     },
+    /// 一张照片被跳过（没动，原因是……）
+    Skipped(Skipped),
     /// 一张照片处理完了
     Photo(PhotoOutcome),
     /// 整次整理结束
@@ -167,7 +236,16 @@ impl JobRunner {
                     if let JobState::Running { progress, .. } = state {
                         progress.scanned = scanned;
                         progress.planned = planned;
-                        progress.skipped = skipped;
+                        progress.skipped = skipped.iter().map(|(_, count)| count).sum();
+                        progress.skipped_reasons = skipped;
+                    }
+                    changed = true;
+                }
+                Ok(Message::Skipped(skipped)) => {
+                    if let JobState::Running { progress, .. } = state
+                        && progress.skipped_photos.len() < MAX_DETAIL_ROWS
+                    {
+                        progress.skipped_photos.push(skipped);
                     }
                     changed = true;
                 }
@@ -180,14 +258,27 @@ impl JobRunner {
                             progress.failed += 1;
                         }
                         progress.current = Some(outcome.source().to_path_buf());
+                        progress.record_move(&outcome);
                     }
                     changed = true;
                 }
                 Ok(Message::Done(result)) => {
-                    *state = JobState::Finished(match result {
+                    let result = match result {
                         Ok(report) => ResultMessage::Report(report),
                         Err(err) => ResultMessage::Error(err),
-                    });
+                    };
+                    // 连同进度一起交出去：结果面板要列明细，而明细正攒在那里
+                    if let JobState::Running { progress, .. } = state {
+                        *state = JobState::Finished {
+                            progress: progress.clone(),
+                            result,
+                        };
+                    } else {
+                        *state = JobState::Finished {
+                            progress: JobProgress::default(),
+                            result,
+                        };
+                    }
                     changed = true;
                 }
                 Err(TryRecvError::Empty) => break,
@@ -195,10 +286,13 @@ impl JobRunner {
                     // 通道关了却没送来 Done：工作线程 panic 了。
                     // 此时状态若还停在「执行中」，界面上的按钮会永远转下去，
                     // 得把这次执行收尾成一个明确的失败
-                    if state.is_running() {
-                        *state = JobState::Finished(ResultMessage::Error(
-                            "执行线程意外结束，请查看日志了解详情".to_owned(),
-                        ));
+                    if let JobState::Running { progress, .. } = state {
+                        *state = JobState::Finished {
+                            progress: progress.clone(),
+                            result: ResultMessage::Error(
+                                "执行线程意外结束，请查看日志了解详情".to_owned(),
+                            ),
+                        };
                         changed = true;
                     }
                     break;
@@ -227,16 +321,22 @@ impl Reporter {
 }
 
 impl Observer for Reporter {
-    fn on_started(&self, scanned: usize, planned: usize, skipped: usize) {
+    fn on_started(&self, scanned: usize, planned: usize, skipped: &[(SkipReason, usize)]) {
         if self
             .tx
             .send(Message::Started {
                 scanned,
                 planned,
-                skipped,
+                skipped: skipped.to_vec(),
             })
             .is_ok()
         {
+            self.notify();
+        }
+    }
+
+    fn on_skipped(&self, skipped: &Skipped) {
+        if self.tx.send(Message::Skipped(skipped.clone())).is_ok() {
             self.notify();
         }
     }
@@ -281,7 +381,10 @@ mod tests {
         wait_for_finish(&mut runner, &mut state, Duration::from_secs(10));
 
         match state {
-            JobState::Finished(ResultMessage::Error(err)) => {
+            JobState::Finished {
+                result: ResultMessage::Error(err),
+                ..
+            } => {
                 assert!(err.contains("输入目录"), "{err}");
             }
             other => panic!("期望得到启动失败的结论，实际为 {other:?}"),
@@ -310,13 +413,53 @@ mod tests {
             succeeded: 3,
             failed: 1,
             current: Some(PathBuf::from("D:\\照片\\a.jpg")),
+            skipped_reasons: vec![(SkipReason::AlreadyInPlace, 6)],
+            ..JobProgress::default()
         };
 
         assert_eq!(progress.done(), 4);
         assert_eq!(progress.total(), 4);
         assert_eq!(progress.ratio(), 1.0);
+        assert!(progress.skipped_summary().contains("已在目标位置 6 张"));
 
         // 计划为 0（例如目录里啥都没有）时按「已完成」算，进度条不该卡在 0
         assert_eq!(JobProgress::default().ratio(), 1.0);
+    }
+
+    #[test]
+    fn every_move_is_recorded_so_the_result_panel_can_list_it() {
+        let mut progress = JobProgress::default();
+        progress.record_move(&PhotoOutcome::Done {
+            source: PathBuf::from("D:\\照片\\a.jpg"),
+            target: PathBuf::from("D:\\已分类\\无拍摄日期\\a.jpg"),
+            folder: FolderKind::NoDate,
+        });
+        progress.record_move(&PhotoOutcome::Failed {
+            source: PathBuf::from("D:\\照片\\b.jpg"),
+            target: PathBuf::from("D:\\已分类\\2026.07.30\\b.jpg"),
+            folder: FolderKind::Day,
+            problem: "占位".to_owned(),
+        });
+
+        // 失败的那张也要记：用户正需要知道它本来要去哪
+        assert_eq!(progress.moves.len(), 2);
+        assert_eq!(progress.moves[1].folder, FolderKind::Day);
+        assert_eq!(progress.omitted_moves, 0);
+    }
+
+    #[test]
+    fn detail_rows_are_capped_but_the_overflow_is_counted() {
+        let mut progress = JobProgress::default();
+        for i in 0..MAX_DETAIL_ROWS + 3 {
+            progress.record_move(&PhotoOutcome::Done {
+                source: PathBuf::from(format!("in\\{i}.jpg")),
+                target: PathBuf::from(format!("out\\{i}.jpg")),
+                folder: FolderKind::Week,
+            });
+        }
+
+        assert_eq!(progress.moves.len(), MAX_DETAIL_ROWS);
+        // 界面上要能说出「还有多少条没列」，否则清单看起来是完整的
+        assert_eq!(progress.omitted_moves, 3);
     }
 }

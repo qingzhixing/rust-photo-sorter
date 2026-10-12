@@ -255,7 +255,10 @@ mod tests {
         assert!(app.message.is_none(), "开始执行后不该再留着配置摘要");
 
         match wait_for_finish(&mut app, Duration::from_secs(10)) {
-            JobState::Finished(ResultMessage::Error(err)) => {
+            JobState::Finished {
+                result: ResultMessage::Error(err),
+                ..
+            } => {
                 assert!(err.contains("输入目录"), "{err}")
             }
             other => panic!("期望得到启动失败的结论，实际为 {other:?}"),
@@ -302,10 +305,17 @@ mod tests {
         run_actions(&mut app, &[ViewAction::Execute]);
 
         match wait_for_finish(&mut app, Duration::from_secs(30)) {
-            JobState::Finished(ResultMessage::Report(report)) => {
+            JobState::Finished {
+                progress,
+                result: ResultMessage::Report(report),
+            } => {
                 assert_eq!(report.succeeded, 2, "{:?}", report.problems);
                 assert_eq!(report.failed, 0, "{:?}", report.problems);
                 assert_eq!(report.mode, ExecuteMode::Move);
+                // 结果面板就是靠这份明细列出「哪张 → 哪张」的
+                assert_eq!(progress.moves.len(), 2, "{:?}", progress.moves);
+                assert!(progress.moves.iter().any(|m| m.source.ends_with("a.jpg")));
+                assert!(progress.moves.iter().all(|m| m.target.exists()));
             }
             other => panic!("期望得到执行报告，实际为 {other:?}"),
         }
@@ -337,15 +347,60 @@ mod tests {
         run_actions(&mut app, &[ViewAction::Execute]);
 
         match wait_for_finish(&mut app, Duration::from_secs(30)) {
-            JobState::Finished(ResultMessage::Report(report)) => {
+            JobState::Finished {
+                progress,
+                result: ResultMessage::Report(report),
+            } => {
                 // 试运行也报「待处理 1 张」，但界面上会额外标出这是试运行
                 assert_eq!(report.succeeded, 1);
                 assert!(report.mode.is_dry_run());
+                // 试运行的全部意义就是「看得到打算怎么搬」，明细必须攒下来
+                assert_eq!(progress.moves.len(), 1);
+                assert!(progress.moves[0].source.ends_with("a.jpg"));
             }
             other => panic!("期望得到执行报告，实际为 {other:?}"),
         }
 
         assert!(input.join("a.jpg").exists(), "试运行不该动源文件");
         assert!(!output.exists(), "试运行不该创建输出目录");
+    }
+
+    #[test]
+    fn dry_run_reports_the_photos_it_left_alone() {
+        let tmp = TempDir::new("gui-dry-run-skip");
+        let input = tmp.path().join("in");
+        // 一张待搬、一张已经在目标位置：后者要在明细里说清楚为什么没动
+        test_support::write(&input.join("待搬.jpg"), "x");
+        test_support::write(&input.join("无拍摄日期").join("已就位.jpg"), "y");
+
+        let mut app = PhotoSorterApp {
+            form: ConfigForm {
+                input_dir: input.display().to_string(),
+                output_dir: input.display().to_string(),
+                ..Default::default()
+            },
+            mode: ExecuteMode::DryRun,
+            ..Default::default()
+        };
+
+        run_actions(&mut app, &[ViewAction::Execute]);
+
+        match wait_for_finish(&mut app, Duration::from_secs(30)) {
+            JobState::Finished { progress, .. } => {
+                // 已就位的那张已经在目标目录里，不该再出现在搬运明细里
+                assert_eq!(progress.moves.len(), 1, "{:?}", progress.moves);
+                assert!(progress.moves[0].source.ends_with("待搬.jpg"));
+
+                assert_eq!(progress.skipped, 1);
+                assert_eq!(progress.skipped_photos.len(), 1);
+                assert!(progress.skipped_photos[0].source.ends_with("已就位.jpg"));
+                assert!(
+                    progress.skipped_summary().contains("已在目标位置"),
+                    "{}",
+                    progress.skipped_summary()
+                );
+            }
+            other => panic!("期望得到执行报告，实际为 {other:?}"),
+        }
     }
 }

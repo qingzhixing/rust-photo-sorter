@@ -8,9 +8,10 @@ fn parse_no_date_sort_type(s: &str) -> Result<NoDateSortType, String> {
     match s {
         "by-modification-date" => Ok(NoDateSortType::ByModificationDate),
         "by-single-folder" => Ok(NoDateSortType::BySingleFolder),
+        "from-filename" => Ok(NoDateSortType::FromFileName),
         "do-not-move" => Ok(NoDateSortType::DoNotMove),
         other => Err(format!(
-            "未知取值 `{other}`，可选: by-modification-date, by-single-folder, do-not-move"
+            "未知取值 `{other}`，可选: by-modification-date, by-single-folder, from-filename, do-not-move"
         )),
     }
 }
@@ -51,6 +52,14 @@ pub(crate) struct CliArgs {
     /// 照片数量阈值
     #[arg(short = 't', long, default_value_t = 20)]
     photo_count_threshold: u32,
+
+    /// 试运行
+    #[arg(long = "dry-run", conflicts_with = "copy")]
+    pub dry_run: bool,
+
+    /// 复制而不是移动
+    #[arg(long = "copy")]
+    pub copy: bool,
 }
 
 impl From<CliArgs> for SortConfig {

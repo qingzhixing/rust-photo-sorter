@@ -121,6 +121,7 @@ fn config_fields(ui: &mut egui::Ui, form: &mut ConfigForm) -> Option<ViewAction>
             for sort_type in [
                 NoDateSortType::ByModificationDate,
                 NoDateSortType::BySingleFolder,
+                NoDateSortType::FromFileName,
                 NoDateSortType::DoNotMove,
             ] {
                 ui.selectable_value(

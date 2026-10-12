@@ -1,19 +1,16 @@
 use std::fmt;
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub enum NoDateSortType {
     // 按修改日期分类
     ByModificationDate,
     // 放入单独文件夹
+    #[default]
     BySingleFolder,
+    // 从文件名里的时间戳推断（截图类工具不写 EXIF，但会把时间塞进文件名）
+    FromFileName,
     // 不移动
     DoNotMove,
-}
-
-impl Default for NoDateSortType {
-    fn default() -> Self {
-        Self::BySingleFolder
-    }
 }
 
 impl fmt::Display for NoDateSortType {
@@ -21,24 +18,20 @@ impl fmt::Display for NoDateSortType {
         let text = match self {
             NoDateSortType::ByModificationDate => "按修改日期分类",
             NoDateSortType::BySingleFolder => "放入单独文件夹",
+            NoDateSortType::FromFileName => "从文件名识别日期",
             NoDateSortType::DoNotMove => "不移动",
         };
         f.write_str(text)
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub enum WorkMode {
     // 将目标目录及其子目录所有照片提取出来并删除空目录
     Extract,
     // 对照片进行分类
+    #[default]
     Sort,
-}
-
-impl Default for WorkMode {
-    fn default() -> Self {
-        Self::Sort
-    }
 }
 
 impl fmt::Display for WorkMode {

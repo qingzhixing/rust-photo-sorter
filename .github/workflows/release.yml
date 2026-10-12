@@ -1,0 +1,173 @@
+name: Release
+
+# 打 tag（如 v0.1.0）就自动发一版：GitHub Release 上同时挂 release 与 debug 两套可执行文件。
+#
+# 手动触发（workflow_dispatch）只编译、把 zip 留在这次运行的 Artifacts 里，不动 Release——
+# 想拿一份当前 master 的 debug 包又还不想打 tag 时用它。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# 默认只读；只有真正写 Release 的那个 job 才提权
+permissions:
+  contents: read
+
+# 同一个 tag 的两次发布不并发：资产传到一半被打断会留下半成品
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  verify:
+    name: 发布前先跑测试
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # tag 可以打在任何一个 commit 上，所以发布前自己再验一遍，不假设 CI 已经跑过
+      - name: cargo test
+        run: cargo test --workspace --locked
+
+  build:
+    name: 编译打包 (${{ matrix.kind }})
+    needs: verify
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # dev profile 就是 `cargo build` 的默认档。
+          # 不能写 `--profile debug`：cargo 把 debug 这个名字留作保留字，会直接报错。
+          - kind: release
+            flags: --release
+            dir: release
+          - kind: debug
+            flags: ''
+            dir: debug
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: 计算版本号
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = $env:GITHUB_REF_NAME
+          } else {
+            $version = "dev-$(git rev-parse --short HEAD)"
+          }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "版本号：$version"
+
+      - name: 编译
+        run: cargo build --workspace --locked ${{ matrix.flags }}
+
+      - name: 打包
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $binDir = "target/${{ matrix.dir }}"
+          $version = $env:VERSION
+          $dist = "dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+
+          foreach ($name in @('cli', 'gui')) {
+            $pkg = "photo-sorter-$name"
+            $exe = Join-Path $binDir "$pkg.exe"
+            if (-not (Test-Path $exe)) { throw "没找到 $exe —— cargo 的产物名变了？" }
+
+            $stage = Join-Path $dist $pkg
+            New-Item -ItemType Directory -Force -Path $stage | Out-Null
+            Copy-Item $exe $stage
+            Copy-Item readme.md, LICENSE $stage
+
+            # MSVC 把调试信息放在同目录的 .pdb 里（文件名是下划线写法，跟 exe 不同名），
+            # 不带上它，用户拿到的堆栈就只剩一串地址
+            $pdb = Join-Path $binDir ("photo_sorter_" + $name + ".pdb")
+            if (Test-Path $pdb) { Copy-Item $pdb $stage }
+
+            # 压缩整个暂存目录，解压出来是一层干净的文件夹，不会把文件撒得满地都是
+            $zip = Join-Path $dist "$pkg-$version-windows-x86_64-${{ matrix.kind }}.zip"
+            Compress-Archive -Path $stage -DestinationPath $zip -Force
+          }
+
+          Get-ChildItem $dist -Filter *.zip |
+            Select-Object Name, @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } } |
+            Format-Table -AutoSize | Out-String | Write-Host
+
+      # 先挂在这次运行的 Artifacts 上：手动触发时这就是唯一产物，
+      # 打 tag 时也方便在 Actions 页面直接下载，不必翻 Release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: photo-sorter-${{ matrix.kind }}
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: 发布到 GitHub Release
+    needs: build
+    # 只有 tag 才发 Release；手动触发推的是分支，产物留在 Artifacts 里就够
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+
+      - name: 创建 / 更新 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # -e 是必须的：create 失败时要立刻停下，别把草稿转成正式版
+          set -euo pipefail
+          mapfile -t files < <(find dist -name '*.zip' -type f | sort)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "一个 zip 都没下到，中止" >&2
+            exit 1
+          fi
+
+          # --repo：这个 job 没有 checkout，gh 无法从 git 远端推断仓库
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # 已经发过（重跑、或者先建了草稿）：覆盖同名资产
+            gh release upload "$TAG" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            # 先建成草稿，资产传完再对外可见，避免别人看到「传到一半」的 Release
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --generate-notes \
+              --verify-tag \
+              --draft \
+              --repo "$GITHUB_REPOSITORY" \
+              "${files[@]}"
+          fi
+          gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
+
+          {
+            echo "## 已发布 $TAG"
+            echo
+            echo "| 资产 | 大小 |"
+            echo "| --- | --- |"
+            for f in "${files[@]}"; do
+              printf '| %s | %s |\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # 只是打印个链接，别让它成为这一步的成败依据（`shell: bash` 默认带 -e）
+          url=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url -q .url 2>/dev/null || true)
+          if [ -n "$url" ]; then echo "Release: $url"; fi

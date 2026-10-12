@@ -113,3 +113,30 @@ cargo clippy --workspace --all-targets --locked -- -D warnings   # lint，警告
 - Linux 上编译 GUI 需要 X11/Wayland 的头文件，workflow 里那步 `apt-get install` 就是为它准备的。
 - 依赖上要求 **rustc ≥ 1.95**（eframe 0.36 的 MSRV；edition 2024 本身要 1.85+），
   所以 CI 用 `stable` 而不是钉死某个旧版本。
+
+## 📦 发布
+
+打个 tag 就会自动编译发版：
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+`.github/workflows/release.yml` 先在 Windows 上跑一遍测试，
+再把 **release 与 debug 两档**各编一次，产出四个包挂到 GitHub Release。
+Release 先建成草稿、等资产传完才转正，别人不会看到「传到一半」的版本：
+
+| 包（`<tag>` 形如 `v0.1.0`） | 说明 | 实测大小 |
+| --- | --- | --- |
+| `photo-sorter-cli-<tag>-windows-x86_64-release.zip` | 命令行的正式版 | 1.4 MB |
+| `photo-sorter-gui-<tag>-windows-x86_64-release.zip` | 图形界面正式版，双击启动不带控制台 | 13 MB |
+| `photo-sorter-cli-<tag>-windows-x86_64-debug.zip` | 同一份代码的 debug 构建，带完整调试信息 | 9.6 MB |
+| `photo-sorter-gui-<tag>-windows-x86_64-debug.zip` | 排查问题用：带调试信息，从终端启动能看到日志 | 72 MB |
+
+- 每个包解压出来是一层同名文件夹，里面是 exe + `.pdb` + readme + LICENSE。
+  MSVC 把调试信息放在独立的 `.pdb` 里，带上它崩溃堆栈才有符号可查；debug 包偏大也是因为它。
+- 手动触发（Actions → Release → Run workflow）只编译，zip 留在这次运行的 Artifacts 里，
+  不动 Release——想拿一份当前 master 的 debug 包、又还不想打 tag 时用这个。
+- 目前只出 Windows x86_64 的产物。要加 Linux / macOS，或者想让每次推 master 都出一份 debug 包，
+  改 `release.yml` 里的矩阵即可。

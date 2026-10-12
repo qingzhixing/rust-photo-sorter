@@ -29,6 +29,10 @@ static INIT: Once = Once::new();
 pub const LOG_ENV: &str = "RUST_LOG";
 
 /// 双击启动时用来要求新建控制台窗口的环境变量。
+///
+/// 只有 Windows 会去借/新建控制台，所以这个常量跟着 `platform` 模块一起按平台裁剪，
+/// 免得非 Windows 构建里它「没人用」而被 `clippy -D warnings` 拦下。
+#[cfg(windows)]
 pub const ALLOC_CONSOLE_ENV: &str = "PHOTO_SORTER_ALLOC_CONSOLE";
 
 /// debug 构建未设置 [`LOG_ENV`] 时的默认级别。

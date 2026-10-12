@@ -335,6 +335,20 @@ mod tests {
     use std::collections::HashMap as Map;
     use std::path::PathBuf;
 
+    /// 把用例里写的 Windows 风格路径字面量转成当前平台能正确解析的路径。
+    ///
+    /// 这些用例通篇写 `C:\in\a.jpg`（被测的本来就是 Windows 上的整理行为），
+    /// 但反斜杠**只在 Windows 上是分隔符**：在 Linux/macOS 上 `PathBuf::from`
+    /// 会把整串当成**一个文件名**，`file_name()`、`parent()` 全都不对，
+    /// 断言于是集体崩。统一走这个函数，同一份用例两个平台都能跑。
+    fn win_path(literal: &str) -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from(literal)
+        } else {
+            PathBuf::from(literal.replace('\\', "/"))
+        }
+    }
+
     /// 用内存里的目录清单当文件系统，测试不碰真实磁盘。
     #[derive(Default)]
     struct FakeFs(Map<PathBuf, Vec<String>>);
@@ -342,7 +356,7 @@ mod tests {
     impl FakeFs {
         fn with(mut self, dir: &str, names: &[&str]) -> Self {
             self.0.insert(
-                PathBuf::from(dir),
+                win_path(dir),
                 names.iter().map(|n| (*n).to_owned()).collect(),
             );
             self
@@ -361,15 +375,17 @@ mod tests {
             no_date_sort_type: NoDateSortType::BySingleFolder,
             // 和默认配置一致：截图类照片靠文件名里的时间戳入档
             parse_date_from_filename: true,
-            input_dir: "C:\\in".to_owned(),
-            output_dir: "C:\\out".to_owned(),
+            // 配置里的目录是字符串，转成当前平台的原生写法，
+            // 才能和下面 `win_path(...)` 拼出来的路径对得上
+            input_dir: win_path("C:\\in").display().to_string(),
+            output_dir: win_path("C:\\out").display().to_string(),
             photo_count_threshold: 20,
         }
     }
 
     fn photo(path: &str, taken: Option<&str>) -> Photo {
         Photo {
-            path: PathBuf::from(path),
+            path: win_path(path),
             exif_datetime: taken
                 .map(|t| NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S").unwrap()),
             modified: None,
@@ -421,7 +437,7 @@ mod tests {
         assert_eq!(plan.entries[0].folder, FolderKind::Week);
         assert_eq!(
             plan.entries[0].target,
-            PathBuf::from("C:\\out\\2026.07.27 至 08.02 第31周\\a.jpg")
+            win_path("C:\\out\\2026.07.27 至 08.02 第31周\\a.jpg")
         );
     }
 
@@ -441,7 +457,7 @@ mod tests {
             assert_eq!(entry.folder, FolderKind::Day);
             assert_eq!(
                 entry.target.parent().unwrap(),
-                Path::new("C:\\out\\2026.07.30")
+                win_path("C:\\out\\2026.07.30").as_path()
             );
         }
     }
@@ -500,7 +516,7 @@ mod tests {
         assert_eq!(placed.entries[0].folder, FolderKind::NoDate);
         assert_eq!(
             placed.entries[0].target,
-            PathBuf::from("C:\\out\\无拍摄日期\\a.jpg")
+            win_path("C:\\out\\无拍摄日期\\a.jpg")
         );
 
         cfg.no_date_sort_type = NoDateSortType::DoNotMove;
@@ -521,7 +537,7 @@ mod tests {
         // 2026-09-11 是第 37 周的周五，周一为 09-07
         assert_eq!(
             plan.entries[0].target,
-            PathBuf::from("C:\\out\\2026.09.07 至 09.13 第37周\\1629520_20260911110905_1.png")
+            win_path("C:\\out\\2026.09.07 至 09.13 第37周\\1629520_20260911110905_1.png")
         );
     }
 
@@ -537,7 +553,7 @@ mod tests {
         assert_eq!(plan.entries[0].folder, FolderKind::NoDate);
         assert_eq!(
             plan.entries[0].target,
-            PathBuf::from("C:\\out\\无拍摄日期\\1629520_20260911110905_1.png")
+            win_path("C:\\out\\无拍摄日期\\1629520_20260911110905_1.png")
         );
     }
 
@@ -553,7 +569,7 @@ mod tests {
 
         assert_eq!(
             plan.entries[0].target,
-            PathBuf::from("C:\\out\\2026.07.27 至 08.02 第31周\\1629520_20260911110905_1.png")
+            win_path("C:\\out\\2026.07.27 至 08.02 第31周\\1629520_20260911110905_1.png")
         );
     }
 
@@ -571,7 +587,7 @@ mod tests {
 
         assert_eq!(
             plan.entries[0].target,
-            PathBuf::from("C:\\out\\2026.09.07 至 09.13 第37周\\1629520_20260911110905_1.png")
+            win_path("C:\\out\\2026.09.07 至 09.13 第37周\\1629520_20260911110905_1.png")
         );
     }
 
@@ -585,7 +601,7 @@ mod tests {
         assert_eq!(plan.entries[0].folder, FolderKind::NoDate);
         assert_eq!(
             plan.entries[0].target,
-            PathBuf::from("C:\\out\\无拍摄日期\\steam_screenshot.png")
+            win_path("C:\\out\\无拍摄日期\\steam_screenshot.png")
         );
     }
 
@@ -603,7 +619,7 @@ mod tests {
         assert_eq!(plan.entries[0].folder, FolderKind::Week);
         assert_eq!(
             plan.entries[0].target,
-            PathBuf::from("C:\\out\\2026.07.27 至 08.02 第31周\\a.jpg")
+            win_path("C:\\out\\2026.07.27 至 08.02 第31周\\a.jpg")
         );
     }
 
@@ -691,7 +707,10 @@ mod tests {
         assert_eq!(plan.entries.len(), 2);
         for entry in &plan.entries {
             assert_eq!(entry.folder, FolderKind::ExtractRoot);
-            assert_eq!(entry.target.parent().unwrap(), Path::new("C:\\out"));
+            assert_eq!(
+                entry.target.parent().unwrap(),
+                win_path("C:\\out").as_path()
+            );
         }
     }
 

@@ -1,5 +1,7 @@
 # rust-photo-sorter
 
+[![CI](https://github.com/qingzhixing/rust-photo-sorter/actions/workflows/ci.yml/badge.svg)](https://github.com/qingzhixing/rust-photo-sorter/actions/workflows/ci.yml)
+
 ## 🍳 Display
 
 ![project-info](doc/project-info.png)
@@ -91,3 +93,23 @@ crates/
 Core 的 `worker::run` 接受一个可选的 `Observer`：CLI 在试运行时传一个把明细打到 stdout 的实现，
 GUI 传一个把进度与明细转发给界面的实现（不传就是闷头干完再返回报告）。
 「怎么搬」只有一处实现，两个前端不会走出两套行为。
+
+## ✅ 测试
+
+本地跑和 CI 跑的是同一套命令：
+
+```powershell
+cargo test --workspace --locked                              # 全部单元测试
+cargo fmt --all -- --check                                   # 格式
+cargo clippy --workspace --all-targets --locked -- -D warnings   # lint，警告即失败
+```
+
+`.github/workflows/ci.yml` 在推送到主干、提 PR 和手动触发时运行：
+
+- **测试**：Ubuntu 与 Windows 各跑一遍 `cargo test --workspace --locked`。
+  core 里有按平台分叉的代码（跨盘移动的错误码、release 版 GUI 把日志接回控制台），
+  只在一个平台上跑等于少覆盖一半。
+- **格式与 lint**：Ubuntu 上跑 rustfmt 与 clippy（警告即失败）。
+- Linux 上编译 GUI 需要 X11/Wayland 的头文件，workflow 里那步 `apt-get install` 就是为它准备的。
+- 依赖上要求 **rustc ≥ 1.95**（eframe 0.36 的 MSRV；edition 2024 本身要 1.85+），
+  所以 CI 用 `stable` 而不是钉死某个旧版本。

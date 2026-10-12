@@ -1,0 +1,84 @@
+name: CI
+
+# 只在主干推送、PR 和手动触发时跑：
+#   - 主干推送保证合进去的代码是绿的
+#   - PR 在合并前就拦住问题
+#   - workflow_dispatch 方便手动重跑某次
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支上连续推送时，取消还在跑的旧任务，省 runner 也省等待
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # 用例 panic 时直接把 backtrace 打进日志，省得为了复现再跑一遍
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: 测试 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 一个平台挂了，另一个平台仍然跑完——一次就能看到全部失败面
+      fail-fast: false
+      matrix:
+        # core 里有按平台分叉的代码（Windows 的跨盘错误码等），
+        # 两个平台都跑才算真的覆盖到。
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      # eframe/winit 在 Linux 上要这些 X11/Wayland 头文件才能编译 GUI crate
+      - name: 安装 Linux 图形依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libx11-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libxinerama-dev
+
+      # egui 0.36 要求 rustc >= 1.95（edition 2024 本身要 1.85+），
+      # 所以这里必须是 stable 而不是某个写死的旧版本。
+      - uses: dtolnay/rust-toolchain@stable
+
+      # 缓存 ~/.cargo 和 target，冷启动之后的跑法基本只编译改动的 crate
+      - uses: Swatinem/rust-cache@v2
+
+      # --locked：Cargo.lock 是入库的，CI 上不允许悄悄改依赖版本
+      - name: cargo test
+        run: cargo test --workspace --locked
+
+  lint:
+    name: 格式与 lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # clippy 要编译全部 target，包括 GUI，所以同样需要图形依赖
+      - name: 安装 Linux 图形依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libx11-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libxinerama-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      # 警告即失败：本地 `cargo clippy` 只是提示，这里必须挡住
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings

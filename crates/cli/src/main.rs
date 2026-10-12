@@ -35,7 +35,7 @@ fn main() {
     info!("读取到配置: {config}");
     info!("执行方式: {mode}");
 
-    match worker::run(&config, mode) {
+    match worker::run(&config, mode, None) {
         Ok(report) => {
             // 结论是给用户看的正式输出，走 stdout；细节在日志里
             println!("{}", report.summary());

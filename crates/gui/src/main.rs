@@ -11,6 +11,10 @@
 mod app;
 mod logging;
 
+/// 测试专用的小工具，不参与正式构建。
+#[cfg(test)]
+mod test_support;
+
 use eframe::egui;
 use photo_sorter_core::info;
 
@@ -19,7 +23,12 @@ fn main() -> eframe::Result<()> {
     logging::init();
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([520.0, 420.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_title(info::PROJECT_NAME)
+            // 高度按「配置 + 执行 + 结果」三块留足，
+            // 免得进度条和失败清单一出现就要靠滚动才能看到
+            .with_inner_size([560.0, 640.0])
+            .with_min_inner_size([420.0, 360.0]),
         ..Default::default()
     };
 

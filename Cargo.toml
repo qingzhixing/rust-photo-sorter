@@ -36,3 +36,9 @@ rfd = "0.14"
 # logger
 log = "0.4"
 env_logger = "0.11"
+
+# Windows API（release 版 GUI 把日志接回控制台）
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+] }

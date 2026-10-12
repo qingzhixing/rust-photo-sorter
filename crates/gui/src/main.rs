@@ -9,11 +9,15 @@
 //! - [`app`]：控制层，持有状态并响应操作
 
 mod app;
+mod logging;
 
 use eframe::egui;
 use photo_sorter_core::info;
 
 fn main() -> eframe::Result<()> {
+    // 放在最前面：release 下这里会把日志接回父进程的控制台
+    logging::init();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([520.0, 420.0]),
         ..Default::default()

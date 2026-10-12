@@ -24,10 +24,19 @@ pub struct PhotoSorterApp {
 
 impl PhotoSorterApp {
     /// 读取当前表单，并把结果（摘要或错误）记录到待展示状态。
+    ///
+    /// 校验、补全之后的最终配置会写进日志，方便排查「界面上填的」和
+    /// 「实际拿去分类的」不一致的问题。
     fn read_config(&mut self) {
         self.message = Some(match self.form.read_config() {
-            Ok(config) => ReadMessage::Summary(ConfigForm::summarize(&config)),
-            Err(err) => ReadMessage::Error(err),
+            Ok(config) => {
+                log::info!("读取到配置: {config}");
+                ReadMessage::Summary(ConfigForm::summarize(&config))
+            }
+            Err(err) => {
+                log::warn!("读取配置失败: {err}");
+                ReadMessage::Error(err)
+            }
         });
     }
 

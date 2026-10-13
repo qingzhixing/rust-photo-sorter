@@ -2,6 +2,7 @@
 authors = ["qingzhixing <qzsqqmail@qq.com>"]
 description = "A photo sorter written in Rust."
 license = "GPL-3.0"
+version = "0.1.0"
 homepage = "https://github.com/qingzhixing/rust-photo-sorter"
 
 [workspace]

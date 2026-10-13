@@ -44,5 +44,8 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Console",
 ] }
 
+# 解内嵌的图标位图，交给窗口系统（见 gui 的 main.rs）
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 # 把图标资源编进 Windows 的 exe（只在各 crate 的 build.rs 里用）
 winresource = "0.1"

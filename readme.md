@@ -103,12 +103,17 @@ CLI 与 GUI 各一份（十几行，有意重复而不是抽公共 crate）。
 `.ico` 里放了 7 档尺寸（16 / 24 / 32 / 48 / 64 / 128 / 256），
 少一档的话 Explorer 那一档视图就会被系统硬放大、发糊。
 
+上面那份只管「文件在资源管理器里长什么样」。**窗口自己的图标**（Windows 的标题栏与任务栏、
+macOS 的 Dock、X11 的窗口）另走一路：GUI 启动时把 `assets/icon/icon.png` 解成 RGBA 交给
+eframe 的 `ViewportBuilder::with_icon`，由 eframe 按各平台的机制设上去。
+**不设的话 eframe 会自己塞一张默认图标**（黑底白 "e" 的 egui logo），看着就和 exe 的图标对不上。
+
 图标源图是矢量的 `icon.svg`，`icon.ico` 与位图母版 `icon.png` 都是它生成的；
 仓库里只放生成好的这两个文件，不放生成脚本，出图的办法写在 `crates/gui/build.rs` 的注释里。
 关键一点是每一档都单独从矢量渲染，而不是渲一张大图再缩——16×16 那档两者平均差 17/255。
 
-只有 Windows 的图标是「可执行文件自带」的：macOS 的图标属于 `.app` 包、Linux 的属于 `.desktop`
-文件，都不是裸可执行文件能带的，所以那两个平台目前没有图标。
+启动器里那种「装进系统」的图标（Linux 的 `.desktop`、macOS 的 `.app` 包）目前没做：
+裸可执行文件带不了这些，得另外打包。
 
 Core 的 `worker::run` 接受一个可选的 `Observer`：CLI 在试运行时传一个把明细打到 stdout 的实现，
 GUI 传一个把进度与明细转发给界面的实现（不传就是闷头干完再返回报告）。

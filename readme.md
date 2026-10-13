@@ -119,24 +119,39 @@ cargo clippy --workspace --all-targets --locked -- -D warnings   # lint，警告
 打个 tag 就会自动编译发版：
 
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.0        # 正式版
+git tag v0.2.0-rc.1   # 预发布：去掉开头的 v 之后还带 `-` 的 tag 会自动标成 Pre-release
+git push origin --tags
 ```
 
-`.github/workflows/release.yml` 先在 Windows 上跑一遍测试，
-再把 **release 与 debug 两档**各编一次，产出四个包挂到 GitHub Release。
-Release 先建成草稿、等资产传完才转正，别人不会看到「传到一半」的版本：
+`.github/workflows/release.yml` 先在三个系统上各跑一遍测试，再按
+**平台 × 档位（release / debug）** 编译打包，一共 16 个包挂到 GitHub Release
+（4 个平台 × 2 档 × cli / gui 两个程序）。Release 先建成草稿、等资产传完才转正，
+别人不会看到「传到一半」的版本：
 
-| 包（`<tag>` 形如 `v0.1.0`） | 说明 | 实测大小 |
+| 平台 | 编译目标 | 归档 |
 | --- | --- | --- |
-| `photo-sorter-cli-<tag>-windows-x86_64-release.zip` | 命令行的正式版 | 1.4 MB |
-| `photo-sorter-gui-<tag>-windows-x86_64-release.zip` | 图形界面正式版，双击启动不带控制台 | 13 MB |
-| `photo-sorter-cli-<tag>-windows-x86_64-debug.zip` | 同一份代码的 debug 构建，带完整调试信息 | 9.6 MB |
-| `photo-sorter-gui-<tag>-windows-x86_64-debug.zip` | 排查问题用：带调试信息，从终端启动能看到日志 | 72 MB |
+| Windows x86_64 | `x86_64-pc-windows-msvc` | `.zip`，额外带 `.pdb` |
+| Linux x86_64 | `x86_64-unknown-linux-gnu` | `.tar.gz` |
+| macOS Apple Silicon | `aarch64-apple-darwin` | `.tar.gz` |
+| macOS Intel | `x86_64-apple-darwin` | `.tar.gz` |
 
-- 每个包解压出来是一层同名文件夹，里面是 exe + `.pdb` + readme + LICENSE。
-  MSVC 把调试信息放在独立的 `.pdb` 里，带上它崩溃堆栈才有符号可查；debug 包偏大也是因为它。
-- 手动触发（Actions → Release → Run workflow）只编译，zip 留在这次运行的 Artifacts 里，
+每个平台的每个档位各出 cli 与 gui 两个包，命名形如：
+
+```
+photo-sorter-cli-v0.2.0-rc.1-x86_64-unknown-linux-gnu-release.tar.gz
+photo-sorter-gui-v0.2.0-rc.1-x86_64-pc-windows-msvc-debug.zip
+```
+
+- 解压出来是一层同名文件夹，里面是程序 + readme + LICENSE；Windows 多一个 `.pdb`，
+  macOS 的 debug 档多一个 `.dSYM`（macOS 默认把调试信息拆出来放）。
+  带上这些符号文件，崩溃堆栈才不是一串地址。
+- **debug 档**用的是 cargo 默认的 dev profile（不能写 `--profile debug`：cargo 把 `debug` 当保留字），
+  体积明显更大。Windows 上 GUI 的 release 包约 13 MB、debug 包约 72 MB。
+- **Linux** 的包是在 ubuntu-latest 上编的，要求 glibc ≥ 2.39；GUI 还需要系统里有 X11 / Wayland，
+  以及桌面 portal（文件对话框走 xdg-portal）。
+- **macOS** 从浏览器下载的文件会带 quarantine 属性，第一次打开要
+  `xattr -dr com.apple.quarantine photo-sorter-gui`，或者右键 → 打开。
+- 手动触发（Actions → Release → Run workflow）只编译，产物留在这次运行的 Artifacts 里，
   不动 Release——想拿一份当前 master 的 debug 包、又还不想打 tag 时用这个。
-- 目前只出 Windows x86_64 的产物。要加 Linux / macOS，或者想让每次推 master 都出一份 debug 包，
-  改 `release.yml` 里的矩阵即可。
+- 想砍掉某个平台（比如不要 Intel Mac），把 `release.yml` 构建矩阵里对应的两行删掉即可。

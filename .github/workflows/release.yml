@@ -1,8 +1,10 @@
 name: Release
 
-# 打 tag（如 v0.1.0）就自动发一版：GitHub Release 上同时挂 release 与 debug 两套可执行文件。
+# 打 tag（如 v0.1.0、v0.2.0-rc.1）就自动发一版：
+# Windows / Linux / macOS 三平台，release 与 debug 两档，全部挂到 GitHub Release 上。
+# 带预发布后缀的 tag（`v0.2.0-rc.1` 这类）会自动标成 Pre-release。
 #
-# 手动触发（workflow_dispatch）只编译、把 zip 留在这次运行的 Artifacts 里，不动 Release——
+# 手动触发（workflow_dispatch）只编译、把产物留在这次运行的 Artifacts 里，不动 Release——
 # 想拿一份当前 master 的 debug 包又还不想打 tag 时用它。
 on:
   push:
@@ -24,61 +26,102 @@ env:
 
 jobs:
   verify:
-    name: 发布前先跑测试
-    runs-on: windows-latest
+    name: 发布前先跑测试 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      # 发哪些平台就在哪些平台上验一遍：core 里有按平台分叉的代码
+      # （跨卷移动的错误码 Windows 是 17、unix 是 18）
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
+
+      # Linux 上编译 GUI 要 X11/Wayland 头文件；macOS、Windows 不需要
+      - name: 安装 Linux 图形依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libx11-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libxinerama-dev
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
-      # tag 可以打在任何一个 commit 上，所以发布前自己再验一遍，不假设 CI 已经跑过
       - name: cargo test
         run: cargo test --workspace --locked
 
   build:
-    name: 编译打包 (${{ matrix.kind }})
+    name: 编译打包 (${{ matrix.kind }} / ${{ matrix.target }})
     needs: verify
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # 平台 × 档位逐条列全：比「用 include 往另一条轴上合并」好读，
+      # 也不用去猜矩阵展开的规则。想去掉某个平台，删掉对应的两行即可。
       matrix:
         include:
-          # dev profile 就是 `cargo build` 的默认档。
-          # 不能写 `--profile debug`：cargo 把 debug 这个名字留作保留字，会直接报错。
-          - kind: release
-            flags: --release
-            dir: release
-          - kind: debug
-            flags: ''
-            dir: debug
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, kind: release }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, kind: debug }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, kind: release }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, kind: debug }
+          # Apple Silicon
+          - { os: macos-latest, target: aarch64-apple-darwin, kind: release }
+          - { os: macos-latest, target: aarch64-apple-darwin, kind: debug }
+          # Intel Mac：两个架构都在同一个 runner 上编，Apple 的工具链本来就双向支持
+          - { os: macos-latest, target: x86_64-apple-darwin, kind: release }
+          - { os: macos-latest, target: x86_64-apple-darwin, kind: debug }
     steps:
       - uses: actions/checkout@v7
 
+      - name: 安装 Linux 图形依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libwayland-dev libx11-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libxinerama-dev
+
       - uses: dtolnay/rust-toolchain@stable
 
+      # 非本机架构的目标（两个 macOS 架构里总有一个）要靠 rustup 补装；
+      # host 自带的那些（Windows msvc、Linux gnu）跑这行就是空操作
+      - name: 补装编译目标
+        run: rustup target add ${{ matrix.target }}
+
       - uses: Swatinem/rust-cache@v2
+        with:
+          # 同一个 runner 上会跑多个 target（两个 macOS 架构），缓存必须分开
+          key: ${{ matrix.target }}
 
+      # 用 bash 而不是 pwsh：三个平台都有 bash，这一处不必分平台写两遍
       - name: 计算版本号
-        shell: pwsh
+        shell: bash
         run: |
-          if ($env:GITHUB_REF_TYPE -eq 'tag') {
-            $version = $env:GITHUB_REF_NAME
-          } else {
-            $version = "dev-$(git rev-parse --short HEAD)"
-          }
-          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "版本号：$version"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+          echo "版本号：${version}"
 
+      # matrix.kind 就是 profile 目录名：release 档是 target/<triple>/release，
+      # debug 档用的是 dev profile，落到 target/<triple>/debug。
+      # 注意不能写 `--profile debug`：cargo 把 debug 当保留字，会直接报错。
       - name: 编译
-        run: cargo build --workspace --locked ${{ matrix.flags }}
+        run: cargo build --workspace --locked --target ${{ matrix.target }} ${{ matrix.kind == 'release' && '--release' || '' }}
 
-      - name: 打包
+      - name: 打包（Windows）
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $binDir = "target/${{ matrix.dir }}"
+          $binDir = "target/${{ matrix.target }}/${{ matrix.kind }}"
           $version = $env:VERSION
           $dist = "dist"
           New-Item -ItemType Directory -Force -Path $dist | Out-Null
@@ -99,7 +142,7 @@ jobs:
             if (Test-Path $pdb) { Copy-Item $pdb $stage }
 
             # 压缩整个暂存目录，解压出来是一层干净的文件夹，不会把文件撒得满地都是
-            $zip = Join-Path $dist "$pkg-$version-windows-x86_64-${{ matrix.kind }}.zip"
+            $zip = Join-Path $dist "$pkg-$version-${{ matrix.target }}-${{ matrix.kind }}.zip"
             Compress-Archive -Path $stage -DestinationPath $zip -Force
           }
 
@@ -107,12 +150,45 @@ jobs:
             Select-Object Name, @{ n = 'MB'; e = { [math]::Round($_.Length / 1MB, 1) } } |
             Format-Table -AutoSize | Out-String | Write-Host
 
+      - name: 打包（Linux / macOS）
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="target/${{ matrix.target }}/${{ matrix.kind }}"
+          out="dist"
+          mkdir -p "$out"
+
+          for name in cli gui; do
+            pkg="photo-sorter-$name"
+            exe="$bin_dir/$pkg"
+            if [ ! -f "$exe" ]; then echo "没找到 $exe —— cargo 的产物名变了？" >&2; exit 1; fi
+
+            stage="$out/$pkg"
+            rm -rf "$stage"
+            mkdir -p "$stage"
+            cp "$exe" "$stage/"
+            cp readme.md LICENSE "$stage/"
+
+            # macOS 默认把调试信息放在独立的 .dSYM 目录里；
+            # Linux 的调试信息内嵌在可执行文件里，没有这个目录
+            if [ -d "$bin_dir/$pkg.dSYM" ]; then cp -R "$bin_dir/$pkg.dSYM" "$stage/"; fi
+
+            # 用 tar.gz 而不是 zip：能保住可执行位，解压出来直接能跑
+            tar -czf "$out/$pkg-$VERSION-${{ matrix.target }}-${{ matrix.kind }}.tar.gz" -C "$out" "$pkg"
+            rm -rf "$stage"
+          done
+
+          ls -lh "$out"
+
       # 先挂在这次运行的 Artifacts 上：手动触发时这就是唯一产物，
       # 打 tag 时也方便在 Actions 页面直接下载，不必翻 Release
       - uses: actions/upload-artifact@v7
         with:
-          name: photo-sorter-${{ matrix.kind }}
-          path: dist/*.zip
+          name: photo-sorter-${{ matrix.target }}-${{ matrix.kind }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
           if-no-files-found: error
           retention-days: 30
 
@@ -136,11 +212,22 @@ jobs:
         run: |
           # -e 是必须的：create 失败时要立刻停下，别把草稿转成正式版
           set -euo pipefail
-          mapfile -t files < <(find dist -name '*.zip' -type f | sort)
+
+          # Windows 收 zip，Linux / macOS 收 tar.gz，两种都要
+          mapfile -t files < <(find dist -type f \( -name '*.zip' -o -name '*.tar.gz' \) | sort)
           if [ ${#files[@]} -eq 0 ]; then
-            echo "一个 zip 都没下到，中止" >&2
+            echo "一个产物都没下到，中止" >&2
             exit 1
           fi
+
+          # 去掉开头的 v 之后还带 `-` 的（v0.2.0-rc.1、v1.0.0-beta）算预发布，正式版不加标记
+          pre_flag=()
+          case "${TAG#v}" in
+            *-*)
+              pre_flag=(--prerelease)
+              echo "tag $TAG 带着预发布后缀，会标成 Pre-release"
+              ;;
+          esac
 
           # --repo：这个 job 没有 checkout，gh 无法从 git 远端推断仓库
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -154,14 +241,16 @@ jobs:
               --verify-tag \
               --draft \
               --repo "$GITHUB_REPOSITORY" \
+              "${pre_flag[@]}" \
               "${files[@]}"
           fi
-          gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
+          # 草稿转正；同时把预发布标记再确认一遍（重跑或手改过的情况）
+          gh release edit "$TAG" --draft=false "${pre_flag[@]}" --repo "$GITHUB_REPOSITORY"
 
           {
             echo "## 已发布 $TAG"
             echo
-            echo "| 资产 | 大小 |"
+            echo "| 产物 | 大小 |"
             echo "| --- | --- |"
             for f in "${files[@]}"; do
               printf '| %s | %s |\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)"

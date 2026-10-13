@@ -19,11 +19,11 @@ use self::config_form::ConfigForm;
 use self::job::{JobRunner, JobState};
 use self::view::{ReadMessage, ViewAction};
 
-/// 照片分类的配置界面。
+/// 照片分类的配置界面，外加一页版本信息。
 ///
 /// 各字段的「初始状态」都由它们自己的 [`Default`] 决定：
 /// 配置项用 core 的默认值，执行方式默认「移动」（和 CLI 一致），
-/// 没有正在跑的任务、也没有已读出的配置。
+/// 没有正在跑的任务、也没有已读出的配置，默认停在配置页。
 #[derive(Default)]
 pub struct PhotoSorterApp {
     /// 正在编辑中的配置，表单控件直接绑定到这些字段
@@ -36,6 +36,8 @@ pub struct PhotoSorterApp {
     state: JobState,
     /// 后台执行器
     jobs: JobRunner,
+    /// 是否正停在版本页
+    show_version: bool,
 }
 
 impl PhotoSorterApp {
@@ -102,6 +104,8 @@ impl PhotoSorterApp {
                         self.form.output_dir = dir;
                     }
                 }
+                ViewAction::OpenVersion => self.show_version = true,
+                ViewAction::CloseVersion => self.show_version = false,
             }
         }
     }
@@ -120,6 +124,7 @@ impl eframe::App for PhotoSorterApp {
             &mut self.mode,
             self.message.as_ref(),
             &self.state,
+            self.show_version,
             &mut actions,
         );
 
@@ -402,5 +407,17 @@ mod tests {
             }
             other => panic!("期望得到执行报告，实际为 {other:?}"),
         }
+    }
+
+    #[test]
+    fn version_page_opens_and_closes_from_the_header_buttons() {
+        let mut app = PhotoSorterApp::default();
+        assert!(!app.show_version, "默认应当停在配置页");
+
+        run_actions(&mut app, &[ViewAction::OpenVersion]);
+        assert!(app.show_version, "点了「版本」就该切过去");
+
+        run_actions(&mut app, &[ViewAction::CloseVersion]);
+        assert!(!app.show_version, "点了「返回」就该切回来");
     }
 }

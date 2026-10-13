@@ -1,8 +1,11 @@
-//! 配置表单的**视图层**。
+//! 窗口的**视图层**：配置页与版本页。
 //!
 //! 这里只负责把 [`ConfigForm`] 与执行状态渲染出来，并把用户操作翻译成
 //! [`ViewAction`] 追加进 `actions`；视图本身不修改配置数据、不做校验、
 //! 也不执行任何业务逻辑。
+//!
+//! 版本页的内容取自 [`info::INFO_ROWS`]——CLI 的 `-V` 念的是同一份清单，
+//! 两个前端不会各说各话。
 //!
 //! 执行状态（进度、结果）来自控制层，视图只读不写：
 //! 点「执行」按钮也仅仅是上报一个 [`ViewAction::Execute`]。
@@ -12,6 +15,7 @@ use std::time::Instant;
 use eframe::egui;
 
 use photo_sorter_core::config::{NoDateSortType, WorkMode};
+use photo_sorter_core::info;
 use photo_sorter_core::photo::file_label;
 use photo_sorter_core::worker::{ExecuteMode, Report};
 
@@ -45,6 +49,10 @@ pub enum ViewAction {
     PickInputDir,
     /// 「输出目录」的「选择…」按钮被点击
     PickOutputDir,
+    /// 顶栏的「版本」按钮被点击
+    OpenVersion,
+    /// 版本页的「返回」按钮被点击
+    CloseVersion,
 }
 
 /// 「读取配置」之后要在界面上展示的结果。
@@ -56,7 +64,7 @@ pub enum ReadMessage {
     Error(String),
 }
 
-/// 渲染整个配置窗口。
+/// 渲染整个窗口：顶栏 +（配置页 | 版本页）。
 ///
 /// 用户操作会**追加**进 `actions`，由控制层决定怎么处理；
 /// 本帧产生多个操作也不会丢。
@@ -66,40 +74,119 @@ pub fn show(
     mode: &mut ExecuteMode,
     message: Option<&ReadMessage>,
     state: &JobState,
+    show_version: bool,
     actions: &mut Vec<ViewAction>,
 ) {
+    header(ui, show_version, actions);
+
     egui::CentralPanel::default().show(ui, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.heading("照片分类配置");
-            ui.add_space(8.0);
-
-            egui::Grid::new("config_grid")
-                .num_columns(2)
-                .spacing([16.0, 10.0])
-                .show(ui, |ui| {
-                    config_fields(ui, form, actions);
-                });
-
-            ui.add_space(8.0);
-
-            if let Some(message) = message {
-                ui.add_space(6.0);
-                match message {
-                    ReadMessage::Summary(summary) => {
-                        ui.label("读取到的配置：");
-                        ui.label(summary);
-                    }
-                    ReadMessage::Error(err) => {
-                        ui.colored_label(egui::Color32::RED, format!("错误：{err}"));
-                    }
-                }
+            if show_version {
+                version_page(ui);
+            } else {
+                config_page(ui, form, mode, message, state, actions);
             }
-
-            ui.add_space(12.0);
-            ui.separator();
-            execute_section(ui, form, mode, state, actions);
         });
     });
+}
+
+/// 顶栏：标题 + 「版本 / 返回」。
+///
+/// 单独做成面板而不是塞进正文开头：正文是可以滚动的，
+/// 入口跟着滚没了的话，这个「偶尔看一眼」的页面就真找不到了。
+fn header(ui: &mut egui::Ui, show_version: bool, actions: &mut Vec<ViewAction>) {
+    egui::Panel::top("app_header").show(ui, |ui| {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.heading(if show_version {
+                "版本信息"
+            } else {
+                "照片分类配置"
+            });
+
+            // 靠右放按钮：右到左布局，先加的在最右边
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if show_version {
+                    if ui.button("← 返回").clicked() {
+                        actions.push(ViewAction::CloseVersion);
+                    }
+                } else if ui
+                    .button("版本")
+                    .on_hover_text("与 `photo-sorter-cli -V` 输出的内容相同")
+                    .clicked()
+                {
+                    actions.push(ViewAction::OpenVersion);
+                }
+            });
+        });
+        ui.add_space(4.0);
+    });
+}
+
+/// 配置页正文：表单 + 执行区。
+fn config_page(
+    ui: &mut egui::Ui,
+    form: &mut ConfigForm,
+    mode: &mut ExecuteMode,
+    message: Option<&ReadMessage>,
+    state: &JobState,
+    actions: &mut Vec<ViewAction>,
+) {
+    egui::Grid::new("config_grid")
+        .num_columns(2)
+        .spacing([16.0, 10.0])
+        .show(ui, |ui| {
+            config_fields(ui, form, actions);
+        });
+
+    ui.add_space(8.0);
+
+    if let Some(message) = message {
+        ui.add_space(6.0);
+        match message {
+            ReadMessage::Summary(summary) => {
+                ui.label("读取到的配置：");
+                ui.label(summary);
+            }
+            ReadMessage::Error(err) => {
+                ui.colored_label(egui::Color32::RED, format!("错误：{err}"));
+            }
+        }
+    }
+
+    ui.add_space(12.0);
+    ui.separator();
+    execute_section(ui, form, mode, state, actions);
+}
+
+/// 版本页正文。
+///
+/// 内容与 CLI 的 `-V` 同源（[`info::INFO_ROWS`]），顺序也一致：
+/// 用户在两边看到的项目名、版本、作者、许可、主页必须是同一套。
+fn version_page(ui: &mut egui::Ui) {
+    egui::Grid::new("version_grid")
+        .num_columns(2)
+        .spacing([16.0, 10.0])
+        .show(ui, |ui| {
+            for row in info::INFO_ROWS {
+                ui.label(format!("{} {}", row.icon, row.label));
+
+                match row.url {
+                    // 主页这类地址点一下交给系统浏览器
+                    // （eframe 默认开着 links feature，见它的 default features）
+                    Some(url) => {
+                        ui.hyperlink_to(row.value, url)
+                            .on_hover_text(format!("在浏览器中打开 {url}"));
+                    }
+                    // 其余的值（作者邮箱等）常要复制走，允许选中
+                    None => {
+                        ui.add(egui::Label::new(row.value).selectable(true))
+                            .on_hover_text(row.value);
+                    }
+                }
+                ui.end_row();
+            }
+        });
 }
 
 /// 渲染表单中的各个字段，收集字段级别的操作。
@@ -443,5 +530,205 @@ fn problems(ui: &mut egui::Ui, report: &Report) {
                     ui.colored_label(egui::Color32::LIGHT_RED, format!("⚠ {problem}"));
                 }
             });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 一帧的输入：给足尺寸（不给的话面板会按 0 大小布局，什么都画不出来）。
+    fn frame_input(events: Vec<egui::Event>) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(800.0, 800.0),
+            )),
+            events,
+            ..Default::default()
+        }
+    }
+
+    /// 跑一帧，返回这一帧的输出。
+    fn run_frame(
+        ctx: &egui::Context,
+        show_version: bool,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        let mut form = ConfigForm::default();
+        let mut mode = ExecuteMode::Move;
+        let mut actions = Vec::new();
+        let mut output = ctx.run_ui(frame_input(events), |ui| {
+            show(
+                ui,
+                &mut form,
+                &mut mode,
+                None,
+                &JobState::default(),
+                show_version,
+                &mut actions,
+            );
+        });
+
+        // 真后端会把字体图集这类纹理增量传给 GPU；测试里没人接，
+        // 得自己清掉——否则 epaint 在 drop 时会认为漏了处理而 panic
+        output.textures_delta.clear();
+        output
+    }
+
+    /// 遍历一帧里画出的所有图元（`Shape::Vec` 要递归下去）。
+    fn walk_shapes(output: &egui::FullOutput, visit: &mut impl FnMut(&egui::Shape)) {
+        fn walk(shape: &egui::Shape, visit: &mut impl FnMut(&egui::Shape)) {
+            visit(shape);
+            if let egui::Shape::Vec(shapes) = shape {
+                for shape in shapes {
+                    walk(shape, visit);
+                }
+            }
+        }
+        for clipped in &output.shapes {
+            walk(&clipped.shape, visit);
+        }
+    }
+
+    /// 跑一帧，把画出来的文字全抠出来。
+    ///
+    /// 界面没法在测试里「看」，但 egui 每帧都会把文字布局交给后端，
+    /// 于是可以据此确认真的是**画了**这些字，而不只是状态变了。
+    fn rendered_texts(show_version: bool) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let output = run_frame(&ctx, show_version, Vec::new());
+
+        let mut texts = Vec::new();
+        walk_shapes(&output, &mut |shape| {
+            if let egui::Shape::Text(text) = shape {
+                texts.push(text.galley.text().to_owned());
+            }
+        });
+        texts
+    }
+
+    /// 某段文字画在了哪里。
+    fn text_rect(output: &egui::FullOutput, needle: &str) -> Option<egui::Rect> {
+        let mut found = None;
+        walk_shapes(output, &mut |shape| {
+            if found.is_none()
+                && let egui::Shape::Text(text) = shape
+                && text.galley.text() == needle
+            {
+                found = Some(egui::Rect::from_min_size(text.pos, text.galley.size()));
+            }
+        });
+        found
+    }
+
+    /// 这一帧有没有请求后端打开某个地址。
+    ///
+    /// 链接点下去要经过后端才会真的拉起浏览器，测试里就看这条命令——
+    /// 不用真弹一个浏览器出来，也能证明链接是活的。
+    fn has_open_url(output: &egui::FullOutput, url: &str) -> bool {
+        output
+            .platform_output
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::OutputCommand::OpenUrl(open) if open.url == url))
+    }
+
+    /// 把指针移到某段文字上并按一下、松手，返回松手那一帧的输出。
+    fn click_on_text(ctx: &egui::Context, show_version: bool, needle: &str) -> egui::FullOutput {
+        // 第一帧先把控件摆出来，才知道那段文字落在哪
+        let first = run_frame(ctx, show_version, Vec::new());
+        let pos = text_rect(&first, needle)
+            .unwrap_or_else(|| panic!("页面上找不到 {needle:?}"))
+            .center();
+
+        // 按下与松开分在两帧：真实的点击就是跨帧的
+        run_frame(
+            ctx,
+            show_version,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ],
+        );
+        run_frame(
+            ctx,
+            show_version,
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }],
+        )
+    }
+
+    /// 版本页要真的把那份共享清单一行行画出来。
+    #[test]
+    fn version_page_renders_every_row_of_the_shared_list() {
+        let texts = rendered_texts(true);
+
+        for row in info::INFO_ROWS {
+            let label = format!("{} {}", row.icon, row.label);
+            assert!(
+                texts.contains(&label),
+                "版本页没画出标签 {label:?}；实际画出：{texts:?}"
+            );
+            assert!(
+                texts.contains(&row.value.to_owned()),
+                "版本页没画出 {} 的值 {:?}；实际画出：{texts:?}",
+                row.label,
+                row.value
+            );
+        }
+    }
+
+    /// 两页不能串场：配置页不该出现版本信息，版本页也不该出现配置项。
+    #[test]
+    fn the_two_pages_do_not_bleed_into_each_other() {
+        let config = rendered_texts(false);
+        assert!(config.contains(&"照片分类配置".to_owned()), "{config:?}");
+        assert!(config.contains(&"执行".to_owned()), "{config:?}");
+        assert!(!config.contains(&"版本信息".to_owned()), "{config:?}");
+
+        let version = rendered_texts(true);
+        assert!(version.contains(&"版本信息".to_owned()), "{version:?}");
+        assert!(!version.contains(&"执行".to_owned()), "{version:?}");
+    }
+
+    /// 主页那一行是真链接：点一下要请求后端打开它。
+    #[test]
+    fn homepage_row_opens_the_url_when_clicked() {
+        let ctx = egui::Context::default();
+
+        // 没点的时候不能自己跳
+        let idle = run_frame(&ctx, true, Vec::new());
+        assert!(!has_open_url(&idle, info::HOMEPAGE), "没人点它就不该跳");
+
+        let clicked = click_on_text(&ctx, true, info::HOMEPAGE);
+        assert!(
+            has_open_url(&clicked, info::HOMEPAGE),
+            "点在主页那一行，应当请求打开 {}",
+            info::HOMEPAGE
+        );
+    }
+
+    /// 别的值不能被顺手做成链接：点版本号不该弹浏览器。
+    #[test]
+    fn plain_values_are_not_links() {
+        let clicked = click_on_text(&egui::Context::default(), true, info::VERSION);
+
+        let opened: Vec<_> = clicked
+            .platform_output
+            .commands
+            .iter()
+            .filter(|command| matches!(command, egui::OutputCommand::OpenUrl(_)))
+            .collect();
+        assert!(opened.is_empty(), "点版本号不该打开任何东西：{opened:?}");
     }
 }

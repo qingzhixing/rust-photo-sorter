@@ -43,3 +43,6 @@ windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Console",
 ] }
+
+# 把图标资源编进 Windows 的 exe（只在各 crate 的 build.rs 里用）
+winresource = "0.1"

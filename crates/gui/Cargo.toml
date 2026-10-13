@@ -18,3 +18,7 @@ env_logger = { workspace = true }
 # release 下 GUI 没有控制台，靠这几个 API 把日志接回父进程的终端
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true }
+
+# 给 Windows 的 exe 嵌图标（见 build.rs）
+[target.'cfg(windows)'.build-dependencies]
+winresource = { workspace = true }

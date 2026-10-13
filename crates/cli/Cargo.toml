@@ -13,3 +13,7 @@ clap = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 env_logger = { workspace = true }
+
+# 给 Windows 的 exe 嵌图标（见 build.rs）
+[target.'cfg(windows)'.build-dependencies]
+winresource = { workspace = true }

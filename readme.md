@@ -88,7 +88,23 @@ crates/
 ├── core/   # 扫描 → 规划 → 落地，CLI 与 GUI 共用同一套规则
 ├── cli/    # 命令行前端
 └── gui/    # egui 前端（配置 + 执行 + 进度）
+
+assets/
+├── font/   # GUI 内嵌的中文字体（include_bytes!）
+└── icon/   # 程序图标：icon.svg 是矢量源图，icon.ico / icon.png 是它的产物
 ```
+
+Windows 的 exe 图标走 `build.rs` + `winresource`：把 `assets/icon/icon.ico` 编进 exe 的资源段，
+CLI 与 GUI 各一份（十几行，有意重复而不是抽公共 crate）。
+`.ico` 里放了 7 档尺寸（16 / 24 / 32 / 48 / 64 / 128 / 256），
+少一档的话 Explorer 那一档视图就会被系统硬放大、发糊。
+
+图标源图是矢量的 `icon.svg`，`icon.ico` 与位图母版 `icon.png` 都是它生成的；
+仓库里只放生成好的这两个文件，不放生成脚本，出图的办法写在 `crates/gui/build.rs` 的注释里。
+关键一点是每一档都单独从矢量渲染，而不是渲一张大图再缩——16×16 那档两者平均差 17/255。
+
+只有 Windows 的图标是「可执行文件自带」的：macOS 的图标属于 `.app` 包、Linux 的属于 `.desktop`
+文件，都不是裸可执行文件能带的，所以那两个平台目前没有图标。
 
 Core 的 `worker::run` 接受一个可选的 `Observer`：CLI 在试运行时传一个把明细打到 stdout 的实现，
 GUI 传一个把进度与明细转发给界面的实现（不传就是闷头干完再返回报告）。

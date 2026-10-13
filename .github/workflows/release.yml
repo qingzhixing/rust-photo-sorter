@@ -136,10 +136,15 @@ jobs:
             Copy-Item $exe $stage
             Copy-Item readme.md, LICENSE $stage
 
-            # MSVC 把调试信息放在同目录的 .pdb 里（文件名是下划线写法，跟 exe 不同名），
-            # 不带上它，用户拿到的堆栈就只剩一串地址
-            $pdb = Join-Path $binDir ("photo_sorter_" + $name + ".pdb")
-            if (Test-Path $pdb) { Copy-Item $pdb $stage }
+            # pdb 只跟着 debug 档走：
+            # - MSVC 的调试信息只存在 .pdb 里（文件名是下划线写法，跟 exe 不同名），
+            #   debug 包不带它，行号、变量、源码路径全没了，等于白发；
+            # - release 档的 pdb 只剩公开符号（release profile 默认 debug = false，没有行号），
+            #   却会让 CLI 的下载量翻倍，不值得。
+            if ('${{ matrix.kind }}' -eq 'debug') {
+              $pdb = Join-Path $binDir ("photo_sorter_" + $name + ".pdb")
+              if (Test-Path $pdb) { Copy-Item $pdb $stage }
+            }
 
             # 压缩整个暂存目录，解压出来是一层干净的文件夹，不会把文件撒得满地都是
             $zip = Join-Path $dist "$pkg-$version-${{ matrix.target }}-${{ matrix.kind }}.zip"
@@ -170,9 +175,12 @@ jobs:
             cp "$exe" "$stage/"
             cp readme.md LICENSE "$stage/"
 
-            # macOS 默认把调试信息放在独立的 .dSYM 目录里；
-            # Linux 的调试信息内嵌在可执行文件里，没有这个目录
-            if [ -d "$bin_dir/$pkg.dSYM" ]; then cp -R "$bin_dir/$pkg.dSYM" "$stage/"; fi
+            # 符号文件同样只跟 debug 档走：macOS 默认把调试信息放在独立的 .dSYM 目录里，
+            # release 档没有调试信息可拆（这里也就不该出现 .dSYM）。
+            # Linux 的调试信息内嵌在可执行文件里，没有独立文件可带。
+            if [ '${{ matrix.kind }}' = 'debug' ] && [ -d "$bin_dir/$pkg.dSYM" ]; then
+              cp -R "$bin_dir/$pkg.dSYM" "$stage/"
+            fi
 
             # 用 tar.gz 而不是 zip：能保住可执行位，解压出来直接能跑
             tar -czf "$out/$pkg-$VERSION-${{ matrix.target }}-${{ matrix.kind }}.tar.gz" -C "$out" "$pkg"

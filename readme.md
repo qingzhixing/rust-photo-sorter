@@ -143,11 +143,15 @@ photo-sorter-cli-v0.2.0-rc.1-x86_64-unknown-linux-gnu-release.tar.gz
 photo-sorter-gui-v0.2.0-rc.1-x86_64-pc-windows-msvc-debug.zip
 ```
 
-- 解压出来是一层同名文件夹，里面是程序 + readme + LICENSE；Windows 多一个 `.pdb`，
-  macOS 的 debug 档多一个 `.dSYM`（macOS 默认把调试信息拆出来放）。
-  带上这些符号文件，崩溃堆栈才不是一串地址。
+- 解压出来是一层同名文件夹，里面是程序 + readme + LICENSE。
+  **符号文件只跟 debug 档走**：Windows 的 debug 包多一个 `.pdb`，macOS 的 debug 包多一个 `.dSYM`。
+  MSVC 与 macOS 都把调试信息存在这种独立文件里，不带上它们，debug 包就只剩「没做优化的 exe」，
+  行号、变量、源码路径全没了。
+- release 档**不带**符号文件：release profile 默认 `debug = false`，此时的 `.pdb` 只有公开符号、
+  没有行号，却会让 CLI 的下载量翻倍。去掉后 Windows 的 CLI 包从 1.38 MB 降到 0.85 MB，
+  GUI 包从 13.5 MB 降到 11.6 MB。
 - **debug 档**用的是 cargo 默认的 dev profile（不能写 `--profile debug`：cargo 把 `debug` 当保留字），
-  体积明显更大。Windows 上 GUI 的 release 包约 13 MB、debug 包约 72 MB。
+  体积明显更大：Windows 上 GUI 的 debug 包约 72 MB，其中约八成就是那个 `.pdb`。
 - **Linux** 的包是在 ubuntu-latest 上编的，要求 glibc ≥ 2.39；GUI 还需要系统里有 X11 / Wayland，
   以及桌面 portal（文件对话框走 xdg-portal）。
 - **macOS** 从浏览器下载的文件会带 quarantine 属性，第一次打开要
